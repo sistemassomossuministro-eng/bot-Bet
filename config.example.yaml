@@ -1,0 +1,87 @@
+# Copia este archivo a config.yaml y completa tus datos reales para correr en local.
+# NUNCA subas config.yaml (con tus claves reales) a un repositorio público.
+#
+# En GitHub Actions NO se usan las claves de este archivo: api_key/bot_token/chat_id
+# se sobreescriben automáticamente con los secretos del repo (ODDS_API_KEY,
+# TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID). Puedes dejar los placeholders tal cual
+# y commitear config.yaml sin miedo — ver README para el detalle.
+#
+# Este proyecto está limitado a fútbol (sports: ["football"]) — es el alcance pedido.
+
+bankroll:
+  total: 1000000              # banca total en COP (o la moneda que uses)
+  currency: COP
+  kelly_fraction: 0.25        # Kelly fraccional (25%) — más conservador que Kelly completo
+  max_stake_pct: 0.02         # tope: máximo 2% de la banca por apuesta individual
+  daily_stake_limit_pct: 0.10 # tope: máximo 10% de la banca arriesgada en un mismo día
+  daily_loss_limit_pct: 0.05  # freno: si se pierde más del 5% de la banca en el día, se pausan las alertas
+
+odds_provider:
+  # Proveedor de SOLO LECTURA de cuotas públicas (no coloca apuestas).
+  name: odds_api_io
+  api_key: "TU_API_KEY_AQUI"          # https://odds-api.io
+  base_url: "https://api.odds-api.io/v3"
+  target_bookmakers: ["Betplay"]   # casas colombianas cuyas cuotas se evalúan — Wplay NO está cubierta por
+                                    # odds-api.io a la fecha (confirmado con GET /bookmakers); si algún día
+                                    # aparece ahí, agrégala. Verifica siempre los nombres exactos con
+                                    # GET https://api.odds-api.io/v3/bookmakers?apiKey=TU_KEY antes de sumar una casa.
+  reference_bookmakers: ["Bet365"]  # libro de referencia para estimar la probabilidad "justa" (devig).
+                                     # Pinnacle (el libro "sharp" que este proyecto usaba originalmente como
+                                     # referencia) NO está en el catálogo de odds-api.io — confirmado con
+                                     # GET /bookmakers, no es un tema de nombre ni de plan. Bet365 es el
+                                     # sustituto: no es un libro "sharp" en sentido estricto, pero es de los
+                                     # más líquidos/eficientes entre los que sí cubre el proveedor, así que es
+                                     # la mejor referencia disponible en el nivel gratuito. Ver el README
+                                     # ("Sobre el libro de referencia") para el detalle de esta decisión.
+                                     # El plan gratuito de odds-api.io permite solo 2 bookmakers propios en
+                                     # total (target + reference) — Betplay + Bet365 ocupan ambos cupos.
+  sports: ["football"]                      # slugs de deporte, ver GET /sports
+  leagues: []                               # [] = TODAS las ligas de fútbol del mundo (no solo Colombia). Pon slugs aquí solo si quieres restringir a ligas específicas.
+  poll_interval_seconds: 120
+  lookahead_days: 3
+
+value_detection:
+  devig_method: multiplicative   # multiplicative | shin
+  min_ev_pct: 3.0                # EV mínimo (%) para generar una alerta
+  min_reference_books: 1         # mínimo de libros de referencia requeridos para confiar en la cuota
+  allowed_markets: ["h2h"]       # mercados habilitados: "h2h" (1X2), "totals" (total de goles), "spreads" (hándicap).
+                                  # SOLO h2h por defecto — en producción, "totals"/"spreads" llegaron a producir
+                                  # EV de +700% por un bug real de parseo de líneas (ver README, "Mercados
+                                  # soportados"). No agregues "totals"/"spreads" hasta confirmar que tu corrida
+                                  # ya no descarta líneas por falta de 'point' (revisa el log por
+                                  # "se descarta para no cruzar resultados de líneas distintas").
+  max_ev_pct: 50.0                # red de seguridad: un EV por encima de esto casi nunca es valor real —
+                                   # se descarta y se deja registro en el log en vez de mostrarse como pick.
+
+daily:
+  num_picks: 10                  # cantidad de picks a enviar cada mañana — son los 10 de MAYOR EV encontrados, nunca al azar
+  max_picks_per_event: 1         # diversifica: máx. 1 selección por partido (se relaja si no alcanzan picks distintos)
+  send_hour_local: "07:00"       # informativo — la hora real la define el cron de GitHub Actions
+  timezone: "America/Bogota"
+  settlement_max_age_days: 5     # si un evento no liquida en N días (aplazado, sin datos), se marca 'unsettled_expired'
+  lookahead_days: 1              # ventana de partidos a evaluar cada mañana (mundial, todas las ligas)
+  max_events_per_run: 400        # tope de partidos evaluados por corrida — sube esto si tu plan de la API lo permite
+
+alerts:
+  telegram:
+    enabled: true
+    bot_token: "TU_BOT_TOKEN_AQUI"    # dado por @BotFather — en producción usa el secreto TELEGRAM_BOT_TOKEN
+    chat_id: "TU_CHAT_ID_AQUI"        # tu chat_id personal o de un grupo privado — o el secreto TELEGRAM_CHAT_ID
+  instagram:
+    # Publica automáticamente los picks del día, los resultados de ayer y (el
+    # día 1) el resumen mensual en la cuenta de Instagram de BotBet. Requiere
+    # una cuenta Business/Creator vinculada a una Página de Facebook, una App
+    # de Meta con App Review aprobado, y que este repositorio sea PÚBLICO
+    # (las imágenes se publican vía raw.githubusercontent.com) — ver el README.
+    enabled: false
+    access_token: "TU_ACCESS_TOKEN_DE_INSTAGRAM_AQUI"  # token de larga duración — en producción usa el secreto IG_ACCESS_TOKEN
+    ig_user_id: "TU_IG_USER_ID_AQUI"                   # ID numérico de la cuenta de Instagram — o el secreto IG_USER_ID
+    api_version: "v21.0"
+
+storage:
+  db_path: "data/valuebet.db"
+  output_dir: "output"           # imágenes generadas para redes sociales
+
+logging:
+  level: INFO
+  file: "data/valuebet.log"

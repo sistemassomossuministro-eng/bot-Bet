@@ -1,0 +1,85 @@
+name: Resumen diario de BotBet (fútbol)
+
+# 07:00 hora de Bogotá = 12:00 UTC todo el año (Colombia no tiene horario de
+# verano). Se puede disparar manualmente desde la pestaña Actions con "Run workflow".
+on:
+  schedule:
+    - cron: "0 12 * * *"
+  workflow_dispatch: {}
+
+# Necesario para que el job pueda hacer commit/push de la base de datos y las
+# imágenes generadas de vuelta al repo.
+permissions:
+  contents: write
+
+# Evita que dos ejecuciones (una programada + una manual) corran a la vez y
+# choquen al hacer push.
+concurrency:
+  group: daily-botbet-job
+  cancel-in-progress: false
+
+jobs:
+  daily:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
+      - name: Instalar fuente para las imágenes (mejor tipografía)
+        # Si esto falla por lo que sea, no debe tumbar el job entero — Pillow
+        # cae de vuelta a su fuente por defecto (menos bonita, pero funcional).
+        continue-on-error: true
+        run: sudo apt-get update && sudo apt-get install -y fonts-dejavu-core
+
+      - name: Preparar config.yaml
+        # config.yaml nunca se commitea (está en .gitignore) — se genera en
+        # cada corrida a partir del ejemplo. Los secretos reales (API key,
+        # bot de Telegram) llegan como variables de entorno, no desde el yaml.
+        run: test -f config.yaml || cp config.example.yaml config.yaml
+
+      - name: Ejecutar job diario (liquidar ayer + generar picks de hoy)
+        env:
+          PYTHONPATH: src
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+          IG_USER_ID: ${{ secrets.IG_USER_ID }}
+        run: python -m valuebet.daily_job --config config.yaml
+
+      - name: Commit y push de la base de datos y las imágenes
+        id: commit_push
+        run: |
+          git config user.name "botbet-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add data/ output/
+          if git diff --cached --quiet; then
+            echo "Sin cambios que commitear."
+          else
+            git commit -m "Actualización diaria: picks y resultados $(date -u +%F)"
+            git push
+          fi
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      # Va DESPUÉS del push a propósito: publish_instagram.py arma URLs
+      # públicas tipo raw.githubusercontent.com/<repo>/<sha>/<ruta>, y la
+      # imagen tiene que existir ya en GitHub para que Instagram pueda
+      # descargarla. Si Instagram no está configurado (o falla), este paso
+      # se sale solo sin tumbar el resto del job — Telegram ya se mandó antes.
+      - name: Publicar en Instagram (picks / resultados / resumen mensual)
+        env:
+          PYTHONPATH: src
+          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+          IG_USER_ID: ${{ secrets.IG_USER_ID }}
+          PUSHED_SHA: ${{ steps.commit_push.outputs.sha }}
+        run: python scripts/publish_instagram.py

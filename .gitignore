@@ -1,0 +1,9 @@
+# data/valuebet.db SÍ se commitea a propósito: es el histórico persistente
+# de picks/resultados que GitHub Actions actualiza y empuja cada día.
+# Solo se ignoran los logs (ruidosos, sin valor histórico).
+data/*.log
+config.yaml
+__pycache__/
+*.pyc
+.env
+venv/
