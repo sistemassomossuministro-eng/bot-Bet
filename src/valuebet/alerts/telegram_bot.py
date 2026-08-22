@@ -94,10 +94,13 @@ class TelegramAlerter:
     def send_daily_picks_message(self, pick_date_str: str, picks: List[ValueBet]) -> bool:
         if not picks:
             return self.send(
-                f"⚽ <b>Pronósticos del {pick_date_str}</b>\n\n"
+                f"🎯 <b>Pronósticos del {pick_date_str}</b>\n\n"
                 f"No se encontraron oportunidades con el EV mínimo configurado hoy."
             )
-        lines = [f"⚽ <b>Pronósticos del día — {pick_date_str}</b>", f"{len(picks)} picks de fútbol\n"]
+        # No se asume "fútbol": 'sports' puede incluir más de un deporte (ver
+        # config.example.yaml, leagues_by_sport) y este mensaje debe seguir
+        # siendo correcto sin importar cuáles picks entraron hoy.
+        lines = [f"🎯 <b>Pronósticos del día — {pick_date_str}</b>", f"{len(picks)} picks\n"]
         for i, vb in enumerate(picks, start=1):
             lines.append(
                 f"{i}. <b>{vb.event.label()}</b>\n"

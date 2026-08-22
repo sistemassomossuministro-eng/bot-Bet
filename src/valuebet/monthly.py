@@ -76,7 +76,7 @@ def _monthly_caption(label: str, summary: dict, is_profitable: bool) -> str:
         "Cálculo con stake plano (1 unidad por pick), no representa tu banca real. "
         "Análisis estadístico automatizado, no es garantía de resultado futuro. Juega con "
         "responsabilidad. +18.\n\n"
-        f"#{BRAND_NAME} #ResumenMensual #FutbolMundial #ValueBetting"
+        f"#{BRAND_NAME} #ResumenMensual #ValueBetting"
     )
 
 

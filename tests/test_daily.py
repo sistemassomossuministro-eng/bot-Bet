@@ -6,7 +6,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from valuebet.config import AppConfig, DailyConfig, OddsProviderConfig, ValueDetectionConfig
-from valuebet.daily import select_daily_picks, settle_pending_daily_picks
+from valuebet.daily import generate_daily_picks, select_daily_picks, settle_pending_daily_picks
 from valuebet.kelly import BankrollLimits
 from valuebet.models import Event, ValueBet
 from valuebet.odds_provider import EventResult
@@ -159,3 +159,60 @@ def test_settle_pending_daily_picks_expires_old_unsettled():
 
         row = storage.get_daily_pick(1)
         assert row["result"] == "unsettled_expired"
+
+
+class RecordingProvider:
+    """Proveedor falso que solo registra con qué 'leagues' se llamó a list_events
+    por cada deporte, sin devolver eventos reales — para probar que
+    leagues_by_sport aísla el filtro de un deporte sin afectar a los demás."""
+
+    def __init__(self):
+        self.calls: list = []  # [(sport, leagues), ...]
+
+    def list_events(self, sport, leagues=None, lookahead_days=3, limit=None):
+        self.calls.append((sport, leagues))
+        return []
+
+    def get_event_odds(self, event_id, bookmakers):
+        raise NotImplementedError
+
+    def get_events_odds(self, event_ids, bookmakers):
+        return []
+
+    def get_event_result(self, event_id):
+        raise NotImplementedError
+
+
+def test_generate_daily_picks_restricts_leagues_per_sport_only():
+    """Bug real que este test previene: 'leagues' es una única lista global —
+    usarla para restringir basketball a solo la NBA rompería fútbol (que
+    quiere TODAS sus ligas). leagues_by_sport debe aislar el filtro."""
+    with tempfile.TemporaryDirectory() as tmp:
+        storage = Storage(str(Path(tmp) / "t.db"))
+        cfg = AppConfig(
+            bankroll=BankrollLimits(total=1_000_000),
+            odds_provider=OddsProviderConfig(
+                name="odds_api_io",
+                api_key="x",
+                base_url="https://x",
+                target_bookmakers=["Betplay"],
+                reference_bookmakers=["Bet365"],
+                sports=["football", "basketball"],
+                leagues=[],
+                leagues_by_sport={"basketball": ["usa-nba"]},
+            ),
+            value_detection=ValueDetectionConfig(),
+            daily=DailyConfig(num_picks=10, max_picks_per_event=1),
+            telegram=None,
+            db_path="",
+            output_dir="output",
+            log_level="INFO",
+            log_file=None,
+        )
+        provider = RecordingProvider()
+
+        generate_daily_picks(cfg, provider, storage)
+
+        calls = dict(provider.calls)
+        assert calls["football"] is None  # [] global -> None -> todas las ligas
+        assert calls["basketball"] == ["usa-nba"]

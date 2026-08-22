@@ -4,7 +4,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from valuebet.config import load_config
+from valuebet.config import OddsProviderConfig, leagues_for_sport, load_config
 
 CONFIG_YAML = """
 bankroll:
@@ -123,3 +123,52 @@ def test_instagram_yaml_placeholders_without_env_vars_stay_disabled(monkeypatch)
         cfg = load_config(str(cfg_path))
 
         assert cfg.instagram is None
+
+
+def _op_cfg(**overrides) -> OddsProviderConfig:
+    base = dict(
+        name="odds_api_io",
+        api_key="x",
+        base_url="https://x",
+        target_bookmakers=["Betplay"],
+        reference_bookmakers=["Bet365"],
+        sports=["football", "basketball"],
+    )
+    base.update(overrides)
+    return OddsProviderConfig(**base)
+
+
+def test_leagues_for_sport_falls_back_to_global_list():
+    """Sin entrada propia en leagues_by_sport, un deporte usa la lista global
+    'leagues' — así fútbol sigue viendo todas sus ligas por defecto."""
+    cfg = _op_cfg(leagues=[])
+    assert leagues_for_sport(cfg, "football") is None  # [] -> None -> "todas"
+
+
+def test_leagues_for_sport_per_sport_override_does_not_affect_other_sports():
+    """Caso real: restringir basketball a solo la NBA sin romper la cobertura
+    mundial de fútbol — usar 'leagues' (lista única y global) para esto
+    limitaría también a fútbol, que no tiene ninguna liga llamada 'usa-nba'."""
+    cfg = _op_cfg(leagues=[], leagues_by_sport={"basketball": ["usa-nba"]})
+    assert leagues_for_sport(cfg, "football") is None  # sigue siendo "todas"
+    assert leagues_for_sport(cfg, "basketball") == ["usa-nba"]
+
+
+def test_leagues_by_sport_parsed_from_yaml():
+    # leagues_by_sport debe quedar DENTRO del bloque odds_provider (no al final
+    # del yaml como value_detection) para que se parsee como parte de él.
+    config_with_sports = CONFIG_YAML.replace(
+        'sports: ["football"]',
+        'sports: ["football", "basketball"]\n'
+        '  leagues_by_sport:\n'
+        '    basketball: ["usa-nba"]',
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg_path = Path(tmp) / "config.yaml"
+        cfg_path.write_text(config_with_sports)
+
+        cfg = load_config(str(cfg_path))
+
+        assert cfg.odds_provider.sports == ["football", "basketball"]
+        assert leagues_for_sport(cfg.odds_provider, "football") is None
+        assert leagues_for_sport(cfg.odds_provider, "basketball") == ["usa-nba"]

@@ -1,12 +1,14 @@
 # Copia este archivo a config.yaml y completa tus datos reales para correr en local.
-# NUNCA subas config.yaml (con tus claves reales) a un repositorio público.
+# config.yaml NUNCA se commitea — está en .gitignore a propósito. En GitHub
+# Actions el workflow lo genera solo, copiando este mismo config.example.yaml
+# (ver .github/workflows/daily.yml, paso "Preparar config.yaml"), y las claves
+# reales (api_key/bot_token/chat_id) llegan como variables de entorno desde los
+# Secrets del repo (ODDS_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID), nunca
+# desde el yaml. Si alguna vez ves un config.yaml trackeado en `git status`,
+# es un error — sácalo del repo (no lo necesita, y puede causar conflictos de
+# fusión como el que motivó esta nota).
 #
-# En GitHub Actions NO se usan las claves de este archivo: api_key/bot_token/chat_id
-# se sobreescriben automáticamente con los secretos del repo (ODDS_API_KEY,
-# TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID). Puedes dejar los placeholders tal cual
-# y commitear config.yaml sin miedo — ver README para el detalle.
-#
-# Este proyecto está limitado a fútbol (sports: ["football"]) — es el alcance pedido.
+# Deportes/ligas: ver 'sports'/'leagues'/'leagues_by_sport' más abajo.
 
 bankroll:
   total: 1000000              # banca total en COP (o la moneda que uses)
@@ -35,8 +37,25 @@ odds_provider:
                                      # ("Sobre el libro de referencia") para el detalle de esta decisión.
                                      # El plan gratuito de odds-api.io permite solo 2 bookmakers propios en
                                      # total (target + reference) — Betplay + Bet365 ocupan ambos cupos.
-  sports: ["football"]                      # slugs de deporte, ver GET /sports
-  leagues: []                               # [] = TODAS las ligas de fútbol del mundo (no solo Colombia). Pon slugs aquí solo si quieres restringir a ligas específicas.
+  sports: ["football", "basketball"]        # slugs de deporte, ver GET /sports (con tu key:
+                                             # https://api.odds-api.io/v3/sports?apiKey=TU_KEY).
+                                             # "basketball" trae TODAS las ligas de basketball del
+                                             # mundo (NBA, NCAA, WNBA, ligas menores...) salvo que
+                                             # se restrinja con leagues_by_sport, ver abajo.
+  leagues: []                               # filtro de ligas por defecto, para cualquier deporte que
+                                             # NO tenga su propia entrada en leagues_by_sport. [] = TODAS
+                                             # las ligas de ese deporte en el mundo (no solo Colombia).
+  leagues_by_sport:                         # opcional: restringe un deporte puntual sin afectar a los
+                                             # demás. Sin esto, "basketball" en 'sports' traería TODAS
+                                             # sus ligas (NCAA universitario, WNBA, ligas menores...),
+                                             # no solo la NBA — usar 'leagues' (la lista de arriba) para
+                                             # eso rompería fútbol, porque es la MISMA lista para
+                                             # cualquier deporte que no esté aquí.
+    basketball: ["usa-nba"]                 # slug confirmado con GET /leagues?sport=basketball — deja
+                                             # [] o quita esta línea para traer todas las ligas de
+                                             # basketball. La NBA juega de octubre a junio: en temporada
+                                             # baja (verano boreal) es normal que no aparezcan picks de
+                                             # este deporte, no es un error.
   poll_interval_seconds: 120
   lookahead_days: 3
 

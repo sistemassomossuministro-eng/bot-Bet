@@ -41,17 +41,40 @@ Este proyecto automatiza la parte que **sí** es legítima y estándar en la
 industria: recolectar cuotas públicas, calcular dónde hay valor estadístico
 (EV positivo) y avisarte. La decisión y el clic final siempre son tuyos.
 
-## Alcance: fútbol, todas las ligas del mundo
+## Alcance: fútbol mundial + otros deportes opcionales (ej. NBA)
 
-`odds_provider.sports` está fijado a `["football"]`, y `odds_provider.leagues`
-está vacío (`[]`) **a propósito**: eso significa "todas las ligas de fútbol
-para las que el proveedor tenga datos", no solo la Primera A colombiana. Si
-alguna vez quieres restringir a ligas específicas (por ejemplo, solo las
-grandes europeas), pones sus slugs ahí — pero el valor por defecto del
-proyecto es cobertura mundial. Si en algún momento quieres ampliar a otros
-deportes además de fútbol, es una línea más en `sports` — pero el diseño
-actual (mensajes, imagen, liquidación) asume fútbol (marcador home/away, 1x2,
-totales, hándicap).
+`odds_provider.sports` es una lista — por defecto `["football"]` con
+`odds_provider.leagues: []` (**a propósito**: "todas las ligas de fútbol para
+las que el proveedor tenga datos", no solo la Primera A colombiana). Agregar
+otro deporte es solo una línea más en `sports` (los slugs válidos están en
+`GET /sports` — con tu key: `https://api.odds-api.io/v3/sports?apiKey=TU_KEY`)
+— el resto del pipeline (parseo de cuotas 1X2, EV, liquidación) ya es genérico
+por deporte, no asume fútbol.
+
+Lo que sí hay que decidir es el filtro de **ligas**, porque `leagues` es una
+sola lista que se aplica igual a TODOS los deportes en `sports`. Eso funciona
+bien para un solo deporte, pero rompería fútbol si la usaras para restringir
+otro deporte a una sola liga (ej. dejar solo la NBA) — fútbol no tiene ninguna
+liga con ese slug, así que quedaría sin partidos. Para eso existe
+`leagues_by_sport` (opcional): restringe un deporte puntual sin tocar a los
+demás. Ejemplo ya incluido en `config.example.yaml`:
+
+```yaml
+sports: ["football", "basketball"]
+leagues: []                          # fútbol: todas las ligas del mundo
+leagues_by_sport:
+  basketball: ["usa-nba"]            # basketball: SOLO la NBA (si no, trae
+                                      # también NCAA, WNBA, ligas menores...)
+```
+
+El slug de la NBA (`usa-nba`) se confirma con
+`GET /leagues?sport=basketball&apiKey=TU_KEY`. Antes de activar un deporte
+nuevo, verifica igual que con las casas de apuestas (ver más abajo) que tanto
+tu casa objetivo como tu libro de referencia efectivamente tengan cuotas para
+ese deporte/liga en odds-api.io — que el deporte exista en general no
+garantiza que una casa puntual lo cubra. Ten en cuenta también la temporada:
+la NBA juega de octubre a junio, así que en pleno verano boreal es normal no
+recibir picks de basketball aunque todo esté bien configurado.
 
 ### Sobre Wplay: por ahora no está cubierta
 
@@ -278,8 +301,8 @@ pero para un resumen diario, es complejidad que no se necesita.
    en los Secrets del repo. `config.yaml` está en `.gitignore` y el workflow
    lo genera automáticamente a partir de `config.example.yaml` en cada corrida.
 4. En la pestaña **Actions** del repo, verifica que el workflow "Resumen
-   diario de BotBet (fútbol)" aparezca habilitado.
-5. Pruébalo manualmente: **Actions → Resumen diario de BotBet (fútbol) →
+   diario de BotBet" aparezca habilitado.
+5. Pruébalo manualmente: **Actions → Resumen diario de BotBet →
    Run workflow**. Revisa los logs y que te llegue el mensaje de Telegram.
 6. Listo — de ahí en adelante corre solo todos los días a las 7:00 a.m. hora
    de Bogotá (`cron: "0 12 * * *"`, UTC fijo — Colombia no tiene horario de

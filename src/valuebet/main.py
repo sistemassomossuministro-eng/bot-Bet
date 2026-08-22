@@ -12,7 +12,7 @@ import argparse
 import logging
 import time
 
-from .config import load_config, setup_logging
+from .config import leagues_for_sport, load_config, setup_logging
 from .odds_provider import build_provider
 from .storage.db import Storage
 from .value_finder import find_value_bets
@@ -36,7 +36,7 @@ def run_cycle(cfg, provider, storage, alerter) -> int:
         try:
             stub_events = provider.list_events(
                 sport=sport,
-                leagues=cfg.odds_provider.leagues or None,
+                leagues=leagues_for_sport(cfg.odds_provider, sport),
                 lookahead_days=cfg.odds_provider.lookahead_days,
             )
         except Exception:

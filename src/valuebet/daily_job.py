@@ -6,7 +6,7 @@ Hace, en orden:
      por Telegram junto con la imagen para redes sociales.
   2. Si hoy es día 1 del mes, genera y envía el resumen del mes que acaba de
      terminar (total de picks, ganados/perdidos, y si fue rentable o no).
-  3. Genera los picks de fútbol de hoy (top N por EV) y los envía por Telegram
+  3. Genera los picks de hoy (top N por EV, de los deportes configurados) y los envía por Telegram
      junto con la imagen para redes sociales.
   4. Si Instagram está configurado, encola en un manifiesto JSON (output/) las
      imágenes generadas en esta corrida para publicarlas en Instagram — la
@@ -70,11 +70,11 @@ def _rows_for_results_image(settled_rows) -> list:
 
 def _picks_caption(date_str: str, count: int) -> str:
     return (
-        f"Pronósticos del {date_str} — {count} análisis de fútbol mundial ordenados por valor "
+        f"Pronósticos del {date_str} — {count} análisis deportivos ordenados por valor "
         "esperado (EV) frente a un libro de referencia.\n\n"
         "Esto NO es una recomendación de apuesta ni garantiza un resultado: es un ranking "
         "estadístico automatizado. Juega con responsabilidad. +18.\n\n"
-        f"#{BRAND_NAME} #FutbolMundial #Pronosticos #ValueBetting"
+        f"#{BRAND_NAME} #Pronosticos #ValueBetting"
     )
 
 
@@ -85,7 +85,7 @@ def _results_caption(date_str: str, summary: dict) -> str:
         "publicados ese día.\n\n"
         "Histórico transparente, ganemos o perdamos. Análisis estadístico automatizado, no es "
         "garantía de resultado futuro. +18.\n\n"
-        f"#{BRAND_NAME} #FutbolMundial #Resultados"
+        f"#{BRAND_NAME} #Resultados"
     )
 
 

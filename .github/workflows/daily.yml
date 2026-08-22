@@ -1,4 +1,4 @@
-name: Resumen diario de BotBet (fútbol)
+name: Resumen diario de BotBet
 
 # 07:00 hora de Bogotá = 12:00 UTC todo el año (Colombia no tiene horario de
 # verano). Se puede disparar manualmente desde la pestaña Actions con "Run workflow".

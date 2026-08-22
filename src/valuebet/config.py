@@ -13,7 +13,7 @@ import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 import yaml
 
@@ -29,8 +29,23 @@ class OddsProviderConfig:
     reference_bookmakers: List[str]
     sports: List[str]
     leagues: List[str] = field(default_factory=list)
+    # 'leagues' de arriba es el filtro por defecto, y se aplica igual a TODOS los
+    # deportes en 'sports' si un deporte no tiene su propia entrada aquí. Esto
+    # importa en cuanto 'sports' deja de tener un solo elemento: por ejemplo,
+    # fútbol quiere leagues=[] (todas las ligas del mundo) pero basketball
+    # normalmente se quiere restringir a una liga puntual (ej. solo la NBA, no
+    # también NCAA/WNBA/ligas menores) — usar 'leagues' para eso rompería
+    # fútbol, porque es la MISMA lista para cualquier deporte que no esté acá.
+    # Ver leagues_for_sport() más abajo y el ejemplo en config.example.yaml.
+    leagues_by_sport: Dict[str, List[str]] = field(default_factory=dict)
     poll_interval_seconds: int = 120
     lookahead_days: int = 3
+
+
+def leagues_for_sport(cfg: "OddsProviderConfig", sport: str) -> Optional[List[str]]:
+    """Ligas a pedir para un deporte puntual: su entrada en 'leagues_by_sport' si
+    existe, si no la lista global 'leagues'. [] o {} siempre significa "todas"."""
+    return cfg.leagues_by_sport.get(sport, cfg.leagues) or None
 
 
 @dataclass
@@ -120,6 +135,7 @@ def load_config(path: str = "config.yaml") -> AppConfig:
         reference_bookmakers=op_raw["reference_bookmakers"],
         sports=op_raw["sports"],
         leagues=op_raw.get("leagues", []),
+        leagues_by_sport=op_raw.get("leagues_by_sport", {}),
         poll_interval_seconds=int(op_raw.get("poll_interval_seconds", 120)),
         lookahead_days=int(op_raw.get("lookahead_days", 3)),
     )

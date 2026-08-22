@@ -11,7 +11,7 @@ import logging
 from datetime import date, datetime, timedelta
 from typing import List, Optional
 
-from .config import AppConfig
+from .config import AppConfig, leagues_for_sport
 from .models import Event, ValueBet
 from .odds_provider import OddsProvider
 from .settlement import settle_selection
@@ -70,13 +70,16 @@ def generate_daily_picks(
     all_bookmakers = list(set(cfg.odds_provider.target_bookmakers + cfg.odds_provider.reference_bookmakers))
 
     # leagues=[] (por defecto del proyecto) = TODAS las ligas de fútbol del
-    # mundo para las que el proveedor tenga datos, no solo Colombia.
+    # mundo para las que el proveedor tenga datos, no solo Colombia. Si hay
+    # más de un deporte en 'sports', cada uno puede tener su propio filtro de
+    # ligas vía leagues_by_sport (ver config.py) — así fútbol puede quedar
+    # abierto a todas las ligas mientras basketball se restringe solo a la NBA.
     events: List[Event] = []
     for sport in cfg.odds_provider.sports:
         try:
             stub_events = provider.list_events(
                 sport=sport,
-                leagues=cfg.odds_provider.leagues or None,
+                leagues=leagues_for_sport(cfg.odds_provider, sport),
                 lookahead_days=cfg.daily.lookahead_days,
                 limit=cfg.daily.max_events_per_run,
             )

@@ -279,7 +279,7 @@ DISCLAIMER = "Análisis estadístico automatizado, no es garantía de resultado.
 
 def render_picks_image(pick_date_str: str, rows: List[PickRow], output_path: str) -> str:
     fonts = Fonts.load()
-    img, draw = _base_canvas(fonts, "PRONÓSTICOS DEL DÍA", f"Fútbol · {pick_date_str}")
+    img, draw = _base_canvas(fonts, "PRONÓSTICOS DEL DÍA", pick_date_str)
     _draw_rows(draw, fonts, rows, top=234, bottom=HEIGHT - 110)
     _draw_footer(draw, fonts, DISCLAIMER)
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
