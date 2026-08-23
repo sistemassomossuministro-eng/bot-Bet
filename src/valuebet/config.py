@@ -40,6 +40,14 @@ class OddsProviderConfig:
     leagues_by_sport: Dict[str, List[str]] = field(default_factory=dict)
     poll_interval_seconds: int = 120
     lookahead_days: int = 3
+    # Enlace opcional por casa (ej. {"Betplay": "https://tu-url-verificada..."}),
+    # para que cada pick del mensaje de Telegram traiga un link de un tap. Vacío
+    # por defecto — no se pone ningún link a menos que TÚ lo configures con tu
+    # propia URL verificada. Ver la nota de seguridad en config.example.yaml:
+    # el sector de apuestas está lleno de sitios clon/afiliados que imitan el
+    # nombre de la casa real, así que este dato no se adivina ni se busca por
+    # el asistente — lo pones tú mismo, copiado de tu sesión ya iniciada.
+    bookmaker_links: Dict[str, str] = field(default_factory=dict)
 
 
 def leagues_for_sport(cfg: "OddsProviderConfig", sport: str) -> Optional[List[str]]:
@@ -90,6 +98,8 @@ class DailyConfig:
     settlement_max_age_days: int = 5
     lookahead_days: int = 1          # ventana de partidos a evaluar (hoy/mañana próximo), a nivel mundial
     max_events_per_run: int = 400    # tope de partidos por corrida, para no agotar la cuota de la API
+    clv_window_hours: float = 3.0    # ver clv.py: qué tan cerca del arranque de un partido se
+                                      # intenta capturar su "cuota de cierre" para medir CLV
 
 
 @dataclass
@@ -136,6 +146,7 @@ def load_config(path: str = "config.yaml") -> AppConfig:
         sports=op_raw["sports"],
         leagues=op_raw.get("leagues", []),
         leagues_by_sport=op_raw.get("leagues_by_sport", {}),
+        bookmaker_links=op_raw.get("bookmaker_links", {}),
         poll_interval_seconds=int(op_raw.get("poll_interval_seconds", 120)),
         lookahead_days=int(op_raw.get("lookahead_days", 3)),
     )
@@ -157,6 +168,7 @@ def load_config(path: str = "config.yaml") -> AppConfig:
         settlement_max_age_days=int(daily_raw.get("settlement_max_age_days", 5)),
         lookahead_days=int(daily_raw.get("lookahead_days", 1)),
         max_events_per_run=int(daily_raw.get("max_events_per_run", 400)),
+        clv_window_hours=float(daily_raw.get("clv_window_hours", 3.0)),
     )
 
     tg_raw = raw.get("alerts", {}).get("telegram", {})

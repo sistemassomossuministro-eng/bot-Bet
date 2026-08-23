@@ -78,6 +78,27 @@ def test_build_stat_tiles_handles_no_decided_picks():
     assert by_label["ROI del mes"].value == "s/d"
 
 
+def test_build_stat_tiles_omits_clv_tile_without_sample():
+    # Sin ningún pick con cierre capturado, no debe aparecer el tile de CLV
+    # (sería una muestra de tamaño 0, sin nada que mostrar).
+    tiles = build_stat_tiles(_summary())
+    assert "CLV promedio" not in {t.label for t in tiles}
+
+
+def test_build_stat_tiles_includes_clv_tile_when_sample_present():
+    from valuebet.social_image import BADGE_WON
+
+    summary = _summary()
+    summary["clv_sample_size"] = 7
+    summary["avg_clv_pct"] = 4.2
+
+    tiles = build_stat_tiles(summary)
+    by_label = {t.label: t for t in tiles}
+    assert "CLV promedio" in by_label
+    assert by_label["CLV promedio"].value == "4.2% (7)"
+    assert by_label["CLV promedio"].value_color == BADGE_WON
+
+
 def _make_vb(event_id, home, away, selection, odds) -> ValueBet:
     event = Event(
         event_id=event_id,
@@ -143,6 +164,63 @@ def test_monthly_picks_summary_empty_month_returns_none_stats():
         assert summary["total"] == 0
         assert summary["roi_pct"] is None
         assert summary["hit_rate_pct"] is None
+        assert summary["clv_sample_size"] == 0
+        assert summary["avg_clv_pct"] is None
+        assert summary["clv_positive_rate_pct"] is None
+
+
+def test_monthly_picks_summary_computes_clv_only_over_captured_picks():
+    with tempfile.TemporaryDirectory() as tmp:
+        storage = Storage(str(Path(tmp) / "t.db"))
+
+        vb1 = _make_vb("e1", "A", "B", "home", 2.00)  # cierre 1.80 -> CLV positivo
+        vb2 = _make_vb("e2", "C", "D", "home", 1.80)  # cierre 2.00 -> CLV negativo
+        vb3 = _make_vb("e3", "E", "F", "home", 2.20)  # sin cierre capturado -> no cuenta
+        for vb in (vb1, vb2, vb3):
+            storage.add_daily_pick("2026-07-15", vb)
+
+        picks = {row["event_id"]: row["id"] for row in storage.list_picks_for_date("2026-07-15")}
+        storage.set_closing_odds(picks["e1"], 1.80, "2026-07-15T00:00:00")
+        storage.set_closing_odds(picks["e2"], 2.00, "2026-07-15T00:00:00")
+
+        summary = storage.monthly_picks_summary(2026, 7)
+        assert summary["clv_sample_size"] == 2
+        expected_avg = ((2.00 / 1.80 - 1) * 100 + (1.80 / 2.00 - 1) * 100) / 2
+        assert round(summary["avg_clv_pct"], 4) == round(expected_avg, 4)
+        assert summary["clv_positive_rate_pct"] == 50.0  # 1 de 2 con CLV positivo
+
+
+def test_recent_picks_summary_uses_rolling_window_not_calendar_month():
+    """A diferencia de monthly_picks_summary, esta ventana no debe resetearse
+    el día 1 del mes — un pick de "hace 2 días" cuenta aunque cruce el borde
+    de mes; uno de "hace 40 días" no, aunque monthly sí lo hubiera contado en
+    su propio mes calendario."""
+    with tempfile.TemporaryDirectory() as tmp:
+        storage = Storage(str(Path(tmp) / "t.db"))
+        today = date(2026, 8, 5)
+
+        vb_in = _make_vb("e-in", "A", "B", "home", 2.00)
+        vb_out = _make_vb("e-out", "C", "D", "home", 2.00)
+        storage.add_daily_pick((today - timedelta(days=2)).isoformat(), vb_in)     # dentro de 30d, cruza julio/agosto
+        storage.add_daily_pick((today - timedelta(days=40)).isoformat(), vb_out)   # fuera de la ventana
+
+        for row in storage.list_picks_for_date((today - timedelta(days=2)).isoformat()):
+            storage.settle_daily_pick(row["id"], "won", 2, 0)
+        for row in storage.list_picks_for_date((today - timedelta(days=40)).isoformat()):
+            storage.settle_daily_pick(row["id"], "won", 2, 0)
+
+        summary = storage.recent_picks_summary(30, today=today)
+        assert summary["total"] == 1
+        assert summary["won"] == 1
+        assert summary["days"] == 30
+
+
+def test_recent_picks_summary_empty_window_returns_zero_total():
+    with tempfile.TemporaryDirectory() as tmp:
+        storage = Storage(str(Path(tmp) / "t.db"))
+        summary = storage.recent_picks_summary(30, today=date(2026, 8, 5))
+        assert summary["total"] == 0
+        assert summary["clv_sample_size"] == 0
 
 
 class RecordingAlerter:

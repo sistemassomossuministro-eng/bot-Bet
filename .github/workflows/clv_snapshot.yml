@@ -1,0 +1,66 @@
+name: Captura de cuota de cierre (CLV)
+
+# Corre más seguido que el resumen diario a propósito: odds-api.io no da
+# cuotas históricas en el plan gratuito (GET /historical/closing-lines es de
+# pago), así que la única forma de saber "qué cuota había justo antes del
+# partido" es capturarla en vivo, mientras el mercado todavía está abierto.
+# Cada corrida solo mira los picks pendientes cuyo partido arranca dentro de
+# 'daily.clv_window_hours' (3 horas por defecto) — normalmente muy pocos, así
+# que el consumo de cuota de la API es mínimo. Ver src/valuebet/clv.py.
+# Minuto 30 (no 0) a propósito: el resumen diario corre "0 12 * * *" — con el
+# mismo minuto, ambos workflows podrían intentar hacer commit/push de data/
+# al mismo tiempo y uno de los dos fallaría por un push rechazado. Si algo
+# así llegara a pasar de todos modos, no hay pérdida real: esa captura
+# simplemente se reintenta sola en la corrida siguiente (el pick sigue
+# elegible mientras closing_odds sea NULL y su partido no haya arrancado).
+on:
+  schedule:
+    - cron: "30 */3 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: clv-snapshot-job
+  cancel-in-progress: false
+
+jobs:
+  clv:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
+      - name: Preparar config.yaml
+        # Igual que en daily.yml: config.yaml nunca se commitea, se genera
+        # aquí a partir del ejemplo, y las claves reales llegan por Secrets.
+        run: test -f config.yaml || cp config.example.yaml config.yaml
+
+      - name: Capturar cuotas de cierre
+        env:
+          PYTHONPATH: src
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+        run: python -m valuebet.capture_clv_job --config config.yaml
+
+      - name: Commit y push de la base de datos (si hubo capturas)
+        run: |
+          git config user.name "botbet-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add data/
+          if git diff --cached --quiet; then
+            echo "Sin cuotas de cierre nuevas que commitear."
+          else
+            git commit -m "Captura de cuota de cierre (CLV) $(date -u +%FT%H:%M)"
+            git push
+          fi

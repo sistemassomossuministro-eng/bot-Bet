@@ -91,7 +91,9 @@ class TelegramAlerter:
             "Las alertas de nuevas apuestas se pausan por hoy."
         )
 
-    def send_daily_picks_message(self, pick_date_str: str, picks: List[ValueBet]) -> bool:
+    def send_daily_picks_message(
+        self, pick_date_str: str, picks: List[ValueBet], bookmaker_links: Optional[dict] = None
+    ) -> bool:
         if not picks:
             return self.send(
                 f"🎯 <b>Pronósticos del {pick_date_str}</b>\n\n"
@@ -100,11 +102,17 @@ class TelegramAlerter:
         # No se asume "fútbol": 'sports' puede incluir más de un deporte (ver
         # config.example.yaml, leagues_by_sport) y este mensaje debe seguir
         # siendo correcto sin importar cuáles picks entraron hoy.
+        bookmaker_links = bookmaker_links or {}
         lines = [f"🎯 <b>Pronósticos del día — {pick_date_str}</b>", f"{len(picks)} picks\n"]
         for i, vb in enumerate(picks, start=1):
+            link = bookmaker_links.get(vb.bookmaker)
+            # Enlace opcional: solo aparece si TÚ lo configuraste con tu propia
+            # URL verificada (odds_provider.bookmaker_links) — nunca se adivina
+            # ni se genera automáticamente, ver la nota de seguridad en el README.
+            casa = f'<a href="{link}">{vb.bookmaker}</a>' if link else vb.bookmaker
             lines.append(
                 f"{i}. <b>{vb.event.label()}</b>\n"
-                f"   {vb.description()} @ {vb.offered_odds:.2f} ({vb.bookmaker})\n"
+                f"   {vb.description()} @ {vb.offered_odds:.2f} ({casa})\n"
                 f"   EV: <b>+{vb.ev_pct:.1f}%</b>"
             )
         lines.append(
@@ -118,6 +126,8 @@ class TelegramAlerter:
             return self.send(
                 f"📊 <b>Resultados del {pick_date_str}</b>\n\nNo hubo picks liquidados en esta corrida."
             )
+        from ..clv import clv_pct  # import local: evita import circular a nivel de módulo
+
         icon = {"won": "✅", "lost": "❌", "push": "➖"}
         lines = [f"📊 <b>Resultados del {pick_date_str}</b>\n"]
         for row in settled_rows:
@@ -128,13 +138,34 @@ class TelegramAlerter:
                 else ""
             )
             desc = describe_selection(row["market_key"], row["selection"], row["home_team"], row["away_team"])
-            lines.append(f"{mark} {row['event_label']} — {desc} @ {row['offered_odds']:.2f}{score}")
+            # CLV por pick (ver clv.py): solo aparece si se alcanzó a capturar
+            # la cuota de cierre antes del partido — no siempre va a estar.
+            closing = row["closing_odds"] if "closing_odds" in row.keys() else None
+            clv_txt = f" · CLV {clv_pct(row['offered_odds'], closing):+.1f}%" if closing else ""
+            lines.append(f"{mark} {row['event_label']} — {desc} @ {row['offered_odds']:.2f}{score}{clv_txt}")
         hit_rate = summary.get("hit_rate_pct")
         hit_rate_txt = f"{hit_rate:.0f}%" if hit_rate is not None else "s/d"
         lines.append(
             f"\nAciertos: {summary.get('won', 0)}/{(summary.get('won', 0) or 0) + (summary.get('lost', 0) or 0)} "
             f"({hit_rate_txt}) · EV promedio del día: {summary.get('avg_ev_pct', 0):.1f}%"
         )
+
+        # Ventana móvil (últimos N días, ver Storage.recent_picks_summary) —
+        # a diferencia del resumen mensual, no se resetea el día 1 de cada mes,
+        # así que da una lectura útil sin importar qué día del mes sea hoy.
+        recent = summary.get("recent_window")
+        if recent and recent.get("total"):
+            r_hit = recent.get("hit_rate_pct")
+            r_hit_txt = f"{r_hit:.0f}%" if r_hit is not None else "s/d"
+            r_decided = (recent.get("won", 0) or 0) + (recent.get("lost", 0) or 0)
+            clv_part = ""
+            if recent.get("clv_sample_size"):
+                clv_part = f" · CLV: {recent['avg_clv_pct']:+.1f}% ({recent['clv_sample_size']})"
+            lines.append(
+                f"Últimos {recent['days']} días: {recent.get('won', 0)}/{r_decided} aciertos "
+                f"({r_hit_txt}){clv_part}"
+            )
+
         return self.send("\n".join(lines))
 
     def send_monthly_summary_message(self, month_label_str: str, summary: dict, is_profitable: bool) -> bool:
@@ -145,6 +176,12 @@ class TelegramAlerter:
         roi = summary.get("roi_pct")
         roi_txt = f"{roi:+.1f}%" if roi is not None else "s/d"
         profit = summary.get("profit_units", 0.0)
+        clv_line = ""
+        if summary.get("clv_sample_size"):
+            clv_line = (
+                f"CLV promedio: <b>{summary['avg_clv_pct']:+.1f}%</b> "
+                f"sobre {summary['clv_sample_size']} picks con cierre capturado\n"
+            )
         text = (
             f"{header}\n\n"
             f"{veredicto}\n\n"
@@ -153,7 +190,8 @@ class TelegramAlerter:
             f"Anulados: {summary.get('push', 0)}\n"
             f"Tasa de acierto: {hit_rate_txt}\n"
             f"Profit (stake plano de 1 unidad por pick): <b>{profit:+.2f}u</b>\n"
-            f"ROI del mes: <b>{roi_txt}</b>\n\n"
+            f"ROI del mes: <b>{roi_txt}</b>\n"
+            f"{clv_line}\n"
             f"Este cálculo asume 1 unidad apostada por pick — no es tu resultado "
             f"real de dinero si apostaste montos distintos o no tomaste todos los "
             f"picks. Análisis estadístico, no garantía de resultados futuros."

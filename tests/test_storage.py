@@ -119,6 +119,42 @@ def test_migration_adds_team_columns_to_legacy_db():
         storage.add_daily_pick("2026-08-24", vb)
         pick_row = storage.list_picks_for_date("2026-08-24")[0]
         assert pick_row["away_team"] == "Nacional"
+        # La migración también debe haber agregado closing_odds/closing_captured_at
+        # (columnas nuevas para CLV) sin explotar sobre esta DB "vieja".
+        assert pick_row["closing_odds"] is None
+        assert pick_row["closing_captured_at"] is None
+
+
+def test_closing_odds_round_trip_and_window_filter():
+    with tempfile.TemporaryDirectory() as tmp:
+        storage = Storage(str(Path(tmp) / "test.db"))
+        soon = datetime.utcnow() + timedelta(hours=1)
+        far = datetime.utcnow() + timedelta(days=3)
+
+        vb_soon = make_value_bet(event_id="evt-soon")
+        vb_soon.event.commence_time = soon
+        vb_far = make_value_bet(event_id="evt-far")
+        vb_far.event.commence_time = far
+
+        storage.add_daily_pick("2026-08-24", vb_soon)
+        storage.add_daily_pick("2026-08-24", vb_far)
+
+        deadline = (datetime.utcnow() + timedelta(hours=3)).isoformat()
+        needing = storage.list_picks_needing_closing_snapshot(deadline)
+        # Solo el partido que arranca dentro de la ventana (1h) debe salir —
+        # el que arranca en 3 días queda fuera hasta que se acerque su hora.
+        assert [r["event_id"] for r in needing] == ["evt-soon"]
+
+        pick_id = needing[0]["id"]
+        storage.set_closing_odds(pick_id, 1.85, datetime.utcnow().isoformat())
+
+        row = storage.get_daily_pick(pick_id)
+        assert row["closing_odds"] == 1.85
+        assert row["closing_captured_at"] is not None
+
+        # Ya capturado -> no debe volver a salir en una próxima corrida.
+        still_needing = storage.list_picks_needing_closing_snapshot(deadline)
+        assert [r["event_id"] for r in still_needing] == []
 
 
 def test_confirm_reject_settle_flow():

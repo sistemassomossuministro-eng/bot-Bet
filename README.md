@@ -236,6 +236,70 @@ Se guarda como `output/latest_monthly_summary.png` y se envía por Telegram.
 Si un mes no tuvo ningún pick registrado, simplemente se omite (no se manda
 un resumen vacío).
 
+## Closing Line Value (CLV): validar si hay valor real, sin esperar meses
+
+El acierto/fallo de picks individuales no dice mucho por sí solo — con EV de
+un dígito, hace falta *literalmente miles* de apuestas para que la tasa de
+acierto real se distinga del ruido estadístico. **CLV** es la métrica que
+usan los apostadores profesionales para resolver este problema: en vez de
+mirar si un pick ganó, compara la cuota que tomaste contra la cuota que ese
+mismo mercado tenía justo antes de que arrancara el partido (la "cuota de
+cierre"). Si constantemente consigues mejor precio que el cierre, es
+evidencia sólida de que estás encontrando valor real — y se puede leer
+pick por pick, no hace falta esperar una muestra enorme.
+
+```
+clv_pct = (cuota_tomada / cuota_de_cierre - 1) * 100
+```
+
+Positivo = conseguiste una cuota más alta (mejor) que la que hubo al cierre,
+el mercado se movió después a tu favor. Negativo = lo contrario.
+
+**Por qué hay un workflow aparte para esto (`clv_snapshot.yml`)**: odds-api.io
+no da cuotas históricas en el plan gratuito (`GET /historical/closing-lines`
+es de pago) — no se puede pedir "¿qué cuota tenía este partido justo antes de
+arrancar?" después de que ya pasó. La única forma de conseguir el dato gratis
+es capturarlo en vivo, mientras el mercado sigue abierto. Por eso
+`clv_snapshot.yml` corre cada 3 horas (en el minuto 30, para no chocar con el
+commit del resumen diario) y busca picks pendientes cuyo partido arranca
+dentro de `daily.clv_window_hours` (3 horas por defecto) — si encuentra
+alguno, pide la cuota actual de ese mismo bookmaker/mercado/selección y la
+guarda como aproximación al cierre (`src/valuebet/clv.py`). No todos los
+picks van a tener cierre capturado (si la casa cierra el mercado antes de que
+corra esta captura, por ejemplo) — no es un error, simplemente ese pick queda
+sin dato de CLV.
+
+El resumen mensual muestra el **CLV promedio** y cuántos picks tuvieron
+cierre capturado, tanto en el mensaje/imagen de Telegram como en el caption
+de Instagram — pero solo aparece una vez que haya al menos un pick con cierre
+capturado en el mes; con muestras muy chicas (unos pocos picks) es apenas una
+señal preliminar, no una conclusión.
+
+El mensaje diario de "resultados de ayer" también muestra el CLV de **cada
+pick individual** (cuando se alcanzó a capturar su cierre), y una línea de
+**últimos 30 días** con aciertos y CLV promedio en ventana móvil — a
+diferencia del resumen mensual, esta no se resetea el día 1 de cada mes, así
+que da una lectura útil sin importar qué día estés revisando.
+
+### Enlace directo a la casa de apuestas (opcional)
+
+Si tu flujo es ver el pick por Telegram y entrar a apostar a mano, podés
+configurar `odds_provider.bookmaker_links` para que cada pick traiga un link
+de un tap a tu casa:
+
+```yaml
+odds_provider:
+  bookmaker_links:
+    Betplay: "https://tu-url-verificada.../"
+```
+
+Viene **vacío por defecto a propósito**. Al buscar la URL oficial de Betplay
+para documentar este ejemplo, ningún resultado de la primera página de
+Google era el dominio real — todos eran sitios "clon" o de afiliados que
+imitan el nombre de la casa. Nunca pegues acá el primer link que te aparezca
+buscando: copiá la URL directamente de tu sesión ya iniciada en la app o el
+sitio real de tu casa de apuestas.
+
 ### Cómo leer un pick
 
 Los mensajes de Telegram, la imagen y la CLI ya no muestran los códigos

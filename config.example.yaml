@@ -58,6 +58,15 @@ odds_provider:
                                              # este deporte, no es un error.
   poll_interval_seconds: 120
   lookahead_days: 3
+  bookmaker_links: {}            # opcional: {"Betplay": "https://tu-url-verificada.../"} para que cada
+                                  # pick del mensaje de Telegram traiga un link de un tap a la casa.
+                                  # DEJAR VACÍO por defecto a propósito — NO pegues acá el primer resultado
+                                  # de un buscador. El sector de apuestas está lleno de sitios "clon" o de
+                                  # afiliados que imitan el nombre de la casa real (lo confirmamos buscando
+                                  # "Betplay Colombia": ningún resultado en la primera página era el dominio
+                                  # oficial). Copia la URL directamente de tu sesión ya iniciada en la app/
+                                  # web real de tu casa, nunca de un resultado de búsqueda ni de un link que
+                                  # alguien te mande.
 
 value_detection:
   devig_method: multiplicative   # multiplicative | shin
@@ -80,6 +89,12 @@ daily:
   settlement_max_age_days: 5     # si un evento no liquida en N días (aplazado, sin datos), se marca 'unsettled_expired'
   lookahead_days: 1              # ventana de partidos a evaluar cada mañana (mundial, todas las ligas)
   max_events_per_run: 400        # tope de partidos evaluados por corrida — sube esto si tu plan de la API lo permite
+  clv_window_hours: 3.0          # CLV (Closing Line Value): ver clv.py y el README. Qué tan cerca del
+                                  # arranque de un partido se captura su cuota de "cierre" — el workflow
+                                  # clv_snapshot.yml corre cada 3 horas buscando picks pendientes dentro
+                                  # de esta ventana. No necesitas tocar esto salvo que quieras capturas
+                                  # más ajustadas al saque inicial (bajando el número) o más margen de
+                                  # tolerancia si el proveedor a veces cierra el mercado temprano.
 
 alerts:
   telegram:

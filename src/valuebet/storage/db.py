@@ -15,7 +15,7 @@ from __future__ import annotations
 import sqlite3
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Iterator, Optional
 
@@ -77,6 +77,13 @@ CREATE TABLE IF NOT EXISTS daily_picks (
     away_score INTEGER,
     settled_at TEXT,
     created_at TEXT NOT NULL,
+    -- closing_odds/closing_captured_at: ver clv.py. odds-api.io no da cuotas
+    -- históricas en el plan gratuito, así que este "precio de cierre" se
+    -- captura en vivo, poco antes de que arranque el partido, con un
+    -- workflow aparte (clv_snapshot.yml) — no siempre va a estar presente
+    -- (ej. si el mercado ya cerró para cuando corrió esa captura).
+    closing_odds REAL,
+    closing_captured_at TEXT,
     UNIQUE(pick_date, event_id, market_key, selection, bookmaker)
 );
 """
@@ -103,6 +110,8 @@ class Storage:
             ("value_bets", "away_team", "TEXT NOT NULL DEFAULT ''"),
             ("daily_picks", "home_team", "TEXT NOT NULL DEFAULT ''"),
             ("daily_picks", "away_team", "TEXT NOT NULL DEFAULT ''"),
+            ("daily_picks", "closing_odds", "REAL"),
+            ("daily_picks", "closing_captured_at", "TEXT"),
         ]:
             existing_cols = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
             if column not in existing_cols:
@@ -328,6 +337,27 @@ class Storage:
                 (result, home_score, away_score, datetime.utcnow().isoformat(), pick_id),
             )
 
+    def list_picks_needing_closing_snapshot(self, deadline_iso: str):
+        """Picks pendientes cuyo partido arranca antes de `deadline_iso` y que
+        todavía no tienen cuota de cierre capturada. Usado por
+        capture_closing_snapshots() (ver clv.py)."""
+        with self._conn() as conn:
+            return conn.execute(
+                """
+                SELECT * FROM daily_picks
+                WHERE result = 'pending' AND closing_odds IS NULL AND commence_time <= ?
+                ORDER BY commence_time
+                """,
+                (deadline_iso,),
+            ).fetchall()
+
+    def set_closing_odds(self, pick_id: int, closing_odds: float, captured_at: str) -> None:
+        with self._conn() as conn:
+            conn.execute(
+                "UPDATE daily_picks SET closing_odds=?, closing_captured_at=? WHERE id=?",
+                (closing_odds, captured_at, pick_id),
+            )
+
     def daily_picks_summary(self, pick_date: str) -> dict:
         with self._conn() as conn:
             row = conn.execute(
@@ -355,52 +385,87 @@ class Storage:
                 "hit_rate_pct": hit_rate,
             }
 
-    def monthly_picks_summary(self, year: int, month: int) -> dict:
-        """Resumen del mes calendario (year, month) sobre daily_picks.
+    @staticmethod
+    def _aggregate_picks(conn: sqlite3.Connection, where_sql: str, params: tuple) -> dict:
+        """Agregación compartida por monthly_picks_summary() y
+        recent_picks_summary() — mismo cálculo, distinto filtro de fechas.
 
         La 'rentabilidad' se calcula con un supuesto de STAKE PLANO: se asume
         que cada pick arriesga 1 unidad. Si ganó, la ganancia es (cuota - 1)
         unidades; si perdió, la pérdida es 1 unidad; un push no gana ni pierde.
         Esto es lo estándar en reportes de tipsters/pronosticadores cuando no
-        hay un stake real registrado (el stake real de lo que tú apostaste de
+        hay un stake real registrado (el stake real de lo que apostaste de
         verdad se lleva aparte, en la tabla value_bets vía la CLI) — no es tu
         rendimiento real de dinero, es el desempeño del MODELO si cada pick se
         hubiera jugado igual.
         """
+        row = conn.execute(
+            f"""
+            SELECT
+                COUNT(*) AS total,
+                COUNT(*) FILTER (WHERE result='won') AS won,
+                COUNT(*) FILTER (WHERE result='lost') AS lost,
+                COUNT(*) FILTER (WHERE result='push') AS push,
+                COUNT(*) FILTER (WHERE result NOT IN ('won','lost','push')) AS other,
+                COALESCE(AVG(ev_pct), 0) AS avg_ev_pct,
+                COALESCE(SUM(CASE
+                    WHEN result='won' THEN offered_odds - 1
+                    WHEN result='lost' THEN -1
+                    ELSE 0
+                END), 0) AS profit_units,
+                COUNT(*) FILTER (WHERE closing_odds IS NOT NULL) AS clv_sample_size,
+                AVG(CASE WHEN closing_odds IS NOT NULL
+                    THEN (offered_odds / closing_odds - 1) * 100 END) AS avg_clv_pct,
+                COUNT(*) FILTER (WHERE closing_odds IS NOT NULL AND offered_odds > closing_odds) AS clv_positive_count
+            FROM daily_picks
+            WHERE {where_sql}
+            """,
+            params,
+        ).fetchone()
+        decided = (row["won"] or 0) + (row["lost"] or 0)
+        hit_rate = (row["won"] / decided * 100) if decided else None
+        roi = (row["profit_units"] / decided * 100) if decided else None
+        clv_sample_size = row["clv_sample_size"] or 0
+        clv_positive_rate = (row["clv_positive_count"] / clv_sample_size * 100) if clv_sample_size else None
+        return {
+            "total": row["total"] or 0,
+            "won": row["won"] or 0,
+            "lost": row["lost"] or 0,
+            "push": row["push"] or 0,
+            "other": row["other"] or 0,
+            "avg_ev_pct": row["avg_ev_pct"] or 0.0,
+            "profit_units": row["profit_units"] or 0.0,
+            "hit_rate_pct": hit_rate,
+            "roi_pct": roi,
+            # CLV = Closing Line Value: ver clv.py. Compara la cuota tomada
+            # contra la cuota de cierre capturada poco antes del partido —
+            # positivo = conseguiste mejor precio que el mercado al cierre,
+            # la señal más confiable de que hay valor real (se puede leer
+            # pick por pick, no necesita miles de apuestas como el acierto).
+            "clv_sample_size": clv_sample_size,
+            "avg_clv_pct": row["avg_clv_pct"],
+            "clv_positive_rate_pct": clv_positive_rate,
+        }
+
+    def monthly_picks_summary(self, year: int, month: int) -> dict:
+        """Resumen del mes calendario (year, month) sobre daily_picks. Ver
+        _aggregate_picks() para el detalle de cada campo."""
         prefix = f"{year:04d}-{month:02d}"
         with self._conn() as conn:
-            row = conn.execute(
-                """
-                SELECT
-                    COUNT(*) AS total,
-                    COUNT(*) FILTER (WHERE result='won') AS won,
-                    COUNT(*) FILTER (WHERE result='lost') AS lost,
-                    COUNT(*) FILTER (WHERE result='push') AS push,
-                    COUNT(*) FILTER (WHERE result NOT IN ('won','lost','push')) AS other,
-                    COALESCE(AVG(ev_pct), 0) AS avg_ev_pct,
-                    COALESCE(SUM(CASE
-                        WHEN result='won' THEN offered_odds - 1
-                        WHEN result='lost' THEN -1
-                        ELSE 0
-                    END), 0) AS profit_units
-                FROM daily_picks
-                WHERE substr(pick_date, 1, 7) = ?
-                """,
-                (prefix,),
-            ).fetchone()
-            decided = (row["won"] or 0) + (row["lost"] or 0)
-            hit_rate = (row["won"] / decided * 100) if decided else None
-            roi = (row["profit_units"] / decided * 100) if decided else None
-            return {
-                "year": year,
-                "month": month,
-                "total": row["total"] or 0,
-                "won": row["won"] or 0,
-                "lost": row["lost"] or 0,
-                "push": row["push"] or 0,
-                "other": row["other"] or 0,
-                "avg_ev_pct": row["avg_ev_pct"] or 0.0,
-                "profit_units": row["profit_units"] or 0.0,
-                "hit_rate_pct": hit_rate,
-                "roi_pct": roi,
-            }
+            summary = self._aggregate_picks(conn, "substr(pick_date, 1, 7) = ?", (prefix,))
+            summary["year"] = year
+            summary["month"] = month
+            return summary
+
+    def recent_picks_summary(self, days: int, today: Optional[date] = None) -> dict:
+        """Resumen de ventana móvil de los últimos `days` días (hasta hoy
+        inclusive), a diferencia de monthly_picks_summary() que se resetea el
+        día 1 de cada mes. Útil para chequear el estado del bot en cualquier
+        momento sin esperar a fin de mes — ver _aggregate_picks()."""
+        today = today or datetime.utcnow().date()
+        since = (today - timedelta(days=days - 1)).isoformat()
+        with self._conn() as conn:
+            summary = self._aggregate_picks(conn, "pick_date >= ?", (since,))
+            summary["days"] = days
+            summary["since"] = since
+            return summary

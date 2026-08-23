@@ -23,6 +23,7 @@ import argparse
 import logging
 
 from .branding import BRAND_NAME
+from .clv import clv_pct
 from .config import load_config, setup_logging
 from .daily import bogota_today, generate_daily_picks, settle_pending_daily_picks
 from .descriptions import describe_selection
@@ -57,10 +58,13 @@ def _rows_for_results_image(settled_rows) -> list:
         color, label = result_badge(r["result"])
         score = f" ({r['home_score']}-{r['away_score']})" if r["home_score"] is not None else ""
         desc = describe_selection(r["market_key"], r["selection"], r["home_team"], r["away_team"])
+        # CLV por pick (ver clv.py): solo si se alcanzó a capturar el cierre.
+        closing = r["closing_odds"] if "closing_odds" in r.keys() else None
+        clv_txt = f" · CLV {clv_pct(r['offered_odds'], closing):+.1f}%" if closing else ""
         rows.append(
             PickRow(
                 match_label=r["event_label"],
-                detail=f"{desc} @ {r['offered_odds']:.2f}{score}",
+                detail=f"{desc} @ {r['offered_odds']:.2f}{score}{clv_txt}",
                 right_text=label,
                 right_color=color,
             )
@@ -106,6 +110,10 @@ def run_daily_job(cfg, provider, storage, alerter) -> None:
         for pick_date_str in sorted(by_date):
             rows_for_date = by_date[pick_date_str]
             summary = storage.daily_picks_summary(pick_date_str)
+            # Ventana móvil de 30 días (no se resetea el día 1 de cada mes,
+            # a diferencia del resumen mensual) — da una lectura útil de "cómo
+            # va el bot" en cualquier momento. Ver Storage.recent_picks_summary.
+            summary["recent_window"] = storage.recent_picks_summary(30, today)
             logger.info("Liquidados %d picks de %s: %s", len(rows_for_date), pick_date_str, summary)
 
             results_rows = _rows_for_results_image(rows_for_date)
@@ -143,7 +151,7 @@ def run_daily_job(cfg, provider, storage, alerter) -> None:
     render_picks_image(today_str, picks_rows, picks_image_path)
 
     if alerter:
-        alerter.send_daily_picks_message(today_str, picks)
+        alerter.send_daily_picks_message(today_str, picks, bookmaker_links=cfg.odds_provider.bookmaker_links)
         if picks:
             alerter.send_photo(picks_image_path, caption=f"Pronósticos del {today_str}")
 

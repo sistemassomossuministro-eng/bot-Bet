@@ -55,7 +55,7 @@ def build_stat_tiles(summary: dict) -> list:
     profit_color = BADGE_WON if profit > 0 else (BADGE_LOST if profit < 0 else TEXT_PRIMARY)
     roi_color = BADGE_WON if (summary["roi_pct"] or 0) > 0 else (BADGE_LOST if (summary["roi_pct"] or 0) < 0 else TEXT_PRIMARY)
 
-    return [
+    tiles = [
         StatTile("Total de picks", str(summary["total"])),
         StatTile("Ganados", str(summary["won"]), value_color=BADGE_WON),
         StatTile("Perdidos", str(summary["lost"]), value_color=BADGE_LOST),
@@ -64,15 +64,38 @@ def build_stat_tiles(summary: dict) -> list:
         StatTile("ROI del mes", _format_pct(summary["roi_pct"]), value_color=roi_color),
     ]
 
+    # CLV (Closing Line Value): solo se muestra si se capturó cierre para
+    # algún pick del mes — ver clv.py. Es la señal más confiable de que hay
+    # valor real, independiente de si el mes fue rentable o no.
+    clv_sample_size = summary.get("clv_sample_size") or 0
+    if clv_sample_size > 0:
+        avg_clv = summary.get("avg_clv_pct")
+        clv_color = BADGE_WON if (avg_clv or 0) > 0 else (BADGE_LOST if (avg_clv or 0) < 0 else TEXT_PRIMARY)
+        tiles.append(
+            StatTile("CLV promedio", f"{_format_pct(avg_clv)} ({clv_sample_size})", value_color=clv_color)
+        )
+
+    return tiles
+
 
 def _monthly_caption(label: str, summary: dict, is_profitable: bool) -> str:
     from .branding import BRAND_NAME
 
     estado = "rentable" if is_profitable else "no rentable"
+    clv_line = ""
+    clv_sample_size = summary.get("clv_sample_size") or 0
+    if clv_sample_size > 0:
+        clv_line = (
+            f"\n\nCLV (Closing Line Value) del mes: {_format_pct(summary.get('avg_clv_pct'))} "
+            f"promedio sobre {clv_sample_size} picks con cierre capturado — mide si la cuota "
+            "tomada fue mejor que el precio del mercado justo antes del partido, independiente "
+            "de si el pick ganó o perdió."
+        )
     return (
         f"Resumen de {label}: {summary['total']} picks, {summary['won']} ganados, "
         f"{summary['lost']} perdidos. Mes {estado} con stake plano de 1u por pick "
-        f"({_format_units(summary['profit_units'])}).\n\n"
+        f"({_format_units(summary['profit_units'])})."
+        f"{clv_line}\n\n"
         "Cálculo con stake plano (1 unidad por pick), no representa tu banca real. "
         "Análisis estadístico automatizado, no es garantía de resultado futuro. Juega con "
         "responsabilidad. +18.\n\n"
