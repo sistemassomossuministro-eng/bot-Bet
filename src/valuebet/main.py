@@ -68,6 +68,7 @@ def run_cycle(cfg, provider, storage, alerter) -> int:
         pnl_today=pnl_today,
         allowed_markets=cfg.value_detection.allowed_markets,
         max_ev_pct=cfg.value_detection.max_ev_pct,
+        max_totals_point=cfg.value_detection.max_totals_point,
     )
 
     if pnl_today <= -abs(limits.daily_loss_limit_pct) * limits.total and alerter:

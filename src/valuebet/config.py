@@ -73,6 +73,14 @@ class ValueDetectionConfig:
     # datos/parseo, no una oportunidad real, así que se descarta en vez de
     # mostrarse como si fuera confiable.
     max_ev_pct: float = 50.0
+    # Otra red de seguridad, distinta de max_ev_pct: descarta líneas de
+    # 'totals' con un punto por encima de este valor (ej. "más de 8.5 goles").
+    # No es un bug de cruce de líneas (el cálculo de EV ahí es correcto) — es
+    # que hasta un libro de referencia "sharp" dedica menos cuidado a líneas
+    # tan extremas/poco apostadas que a la línea principal (ej. 2.5), así que
+    # su cuota ahí es una base menos confiable para estimar la probabilidad
+    # "justa". None desactiva el tope. Ver value_finder.py y el README.
+    max_totals_point: Optional[float] = 5.5
 
 
 @dataclass
@@ -158,6 +166,13 @@ def load_config(path: str = "config.yaml") -> AppConfig:
         min_reference_books=int(vd_raw.get("min_reference_books", 1)),
         allowed_markets=vd_raw.get("allowed_markets", ["h2h"]),
         max_ev_pct=float(vd_raw.get("max_ev_pct", 50.0)),
+        # Distingue "la clave no está en el yaml" (usa el default 5.5) de
+        # "la clave está pero es null" (el usuario desactivó el tope a propósito).
+        max_totals_point=(
+            float(vd_raw["max_totals_point"])
+            if vd_raw.get("max_totals_point") is not None
+            else (None if "max_totals_point" in vd_raw else 5.5)
+        ),
     )
 
     daily_raw = raw.get("daily", {})

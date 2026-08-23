@@ -89,6 +89,13 @@ value_detection:
                                   # por si aparece "se descarta para no cruzar resultados de líneas distintas".
   max_ev_pct: 50.0                # red de seguridad: un EV por encima de esto casi nunca es valor real —
                                    # se descarta y se deja registro en el log en vez de mostrarse como pick.
+  max_totals_point: 5.5           # otra red de seguridad, distinta a la anterior: descarta líneas de
+                                   # "totals" con un punto por encima de este valor (ej. "más de 8.5 goles").
+                                   # No es un bug de cruce de líneas — el cálculo de EV en una línea así SÍ
+                                   # puede ser correcto — pero hasta un libro de referencia "sharp" (Bet365)
+                                   # dedica menos cuidado a líneas tan extremas/poco apostadas que a la
+                                   # línea principal (2.5), así que confiar en esa cuota como "justa" es más
+                                   # riesgoso. Pon `null` para desactivar este tope si quieres ver esas líneas.
 
 daily:
   num_picks: 10                  # cantidad de picks a enviar cada mañana — son los 10 de MAYOR EV encontrados, nunca al azar

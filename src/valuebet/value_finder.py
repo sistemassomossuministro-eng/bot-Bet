@@ -11,6 +11,7 @@ from typing import List, Optional
 from .devig import expected_value_pct, fair_probabilities
 from .kelly import BankrollLimits, suggest_stake
 from .models import Event, ValueBet
+from .settlement import parse_point_suffix
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +39,7 @@ def find_value_bets_in_event(
     pnl_today: float = 0.0,
     allowed_markets: Optional[List[str]] = None,
     max_ev_pct: Optional[float] = None,
+    max_totals_point: Optional[float] = None,
 ) -> List[ValueBet]:
     results: List[ValueBet] = []
 
@@ -60,6 +62,25 @@ def find_value_bets_in_event(
                 continue
 
             for outcome in market.outcomes:
+                if market_key == "totals" and max_totals_point is not None:
+                    _side, point = parse_point_suffix(outcome.name)
+                    if point is not None and point > max_totals_point:
+                        # Líneas de goles muy extremas (7.5, 8.5, 9.5...) casi no se
+                        # apuestan — incluso un libro de referencia "sharp" como
+                        # Bet365 les dedica menos cuidado que a la línea principal
+                        # (ej. 2.5), así que su cuota ahí es una referencia menos
+                        # confiable para calcular la probabilidad "justa". No es el
+                        # bug de cruce de líneas (ver max_ev_pct/hdp) — el cálculo
+                        # es correcto, pero la fuente de comparación es más débil.
+                        # Ver ValueDetectionConfig.max_totals_point.
+                        logger.info(
+                            "Línea de 'totals' descartada por ser extrema (%.1f > tope %.1f): %s",
+                            point,
+                            max_totals_point,
+                            event.label(),
+                        )
+                        continue
+
                 ref_prices = _reference_prices(event, reference_bookmakers, market_key, outcome.name)
                 if not ref_prices:
                     continue
@@ -156,6 +177,7 @@ def find_value_bets(
     pnl_today: float = 0.0,
     allowed_markets: Optional[List[str]] = None,
     max_ev_pct: Optional[float] = None,
+    max_totals_point: Optional[float] = None,
 ) -> List[ValueBet]:
     all_results: List[ValueBet] = []
     for event in events:
@@ -172,6 +194,7 @@ def find_value_bets(
                 pnl_today,
                 allowed_markets,
                 max_ev_pct,
+                max_totals_point,
             )
         )
     all_results.sort(key=lambda vb: vb.ev_pct, reverse=True)

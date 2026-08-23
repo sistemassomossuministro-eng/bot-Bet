@@ -52,6 +52,7 @@ def test_value_detection_defaults_are_safe_h2h_only():
 
         assert cfg.value_detection.allowed_markets == ["h2h"]
         assert cfg.value_detection.max_ev_pct == 50.0
+        assert cfg.value_detection.max_totals_point == 5.5
 
 
 def test_value_detection_allowed_markets_and_max_ev_pct_from_yaml():
@@ -68,6 +69,37 @@ def test_value_detection_allowed_markets_and_max_ev_pct_from_yaml():
 
         assert cfg.value_detection.allowed_markets == ["h2h", "totals"]
         assert cfg.value_detection.max_ev_pct == 25.0
+
+
+def test_value_detection_max_totals_point_can_be_disabled_with_null():
+    """El usuario puede poner `max_totals_point: null` en el yaml para
+    desactivar el tope (a diferencia de simplemente omitir la clave, que usa
+    el default seguro de 5.5)."""
+    config_with_vd = CONFIG_YAML + (
+        "value_detection:\n"
+        "  max_totals_point: null\n"
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg_path = Path(tmp) / "config.yaml"
+        cfg_path.write_text(config_with_vd)
+
+        cfg = load_config(str(cfg_path))
+
+        assert cfg.value_detection.max_totals_point is None
+
+
+def test_value_detection_max_totals_point_custom_value_from_yaml():
+    config_with_vd = CONFIG_YAML + (
+        "value_detection:\n"
+        "  max_totals_point: 6.5\n"
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg_path = Path(tmp) / "config.yaml"
+        cfg_path.write_text(config_with_vd)
+
+        cfg = load_config(str(cfg_path))
+
+        assert cfg.value_detection.max_totals_point == 6.5
 
 
 def test_without_env_vars_uses_yaml_placeholders(monkeypatch):

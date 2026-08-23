@@ -214,3 +214,86 @@ def test_max_ev_pct_rejects_implausible_ev():
         max_ev_pct=50.0,
     )
     assert all(vb.ev_pct <= 50.0 for vb in results_capped)
+
+
+def test_max_totals_point_rejects_extreme_lines():
+    """Caso real reportado por el usuario: 'más de 8.5 goles' con EV positivo
+    y bien calculado (sin cruce de líneas — el punto sí calza entre Betplay y
+    Pinnacle). Aun así, una línea tan extrema/poco apostada es una referencia
+    menos confiable incluso viniendo de un libro 'sharp' — max_totals_point
+    la descarta por precaución, no por un bug de cálculo."""
+    pinnacle_totals = BookmakerMarket(
+        bookmaker="Pinnacle",
+        market_key="totals",
+        updated_at=datetime.utcnow(),
+        outcomes=[Outcome("over_8.5", 2.80), Outcome("under_8.5", 1.45)],
+    )
+    betplay_totals = BookmakerMarket(
+        bookmaker="Betplay",
+        market_key="totals",
+        updated_at=datetime.utcnow(),
+        outcomes=[Outcome("over_8.5", 3.10), Outcome("under_8.5", 1.40)],
+    )
+    event = Event(
+        event_id="evt3",
+        sport="football",
+        league="DFB Pokal",
+        home_team="VfB 1921 Krieschow",
+        away_team="FSV Mainz",
+        commence_time=datetime.utcnow() + timedelta(days=1),
+        bookmakers={"Pinnacle": [pinnacle_totals], "Betplay": [betplay_totals]},
+    )
+
+    results_no_cap = find_value_bets_in_event(
+        event,
+        target_bookmakers=["Betplay"],
+        reference_bookmakers=["Pinnacle"],
+        devig_method="multiplicative",
+        min_ev_pct=1.0,
+        min_reference_books=1,
+    )
+    # Confirma que el fixture sí produce un pick real (EV correcto, no cruzado) sin el tope.
+    assert any(vb.selection == "over_8.5" for vb in results_no_cap)
+
+    results_capped = find_value_bets_in_event(
+        event,
+        target_bookmakers=["Betplay"],
+        reference_bookmakers=["Pinnacle"],
+        devig_method="multiplicative",
+        min_ev_pct=1.0,
+        min_reference_books=1,
+        max_totals_point=5.5,
+    )
+    assert results_capped == []
+
+
+def test_max_totals_point_allows_normal_lines():
+    """Una línea normal (2.5) no debe verse afectada por max_totals_point."""
+    event = make_event()
+    event.bookmakers["Pinnacle"].append(
+        BookmakerMarket(
+            bookmaker="Pinnacle",
+            market_key="totals",
+            updated_at=datetime.utcnow(),
+            outcomes=[Outcome("over_2.5", 1.90), Outcome("under_2.5", 1.90)],
+        )
+    )
+    event.bookmakers["Betplay"].append(
+        BookmakerMarket(
+            bookmaker="Betplay",
+            market_key="totals",
+            updated_at=datetime.utcnow(),
+            outcomes=[Outcome("over_2.5", 2.50), Outcome("under_2.5", 1.60)],
+        )
+    )
+
+    results = find_value_bets_in_event(
+        event,
+        target_bookmakers=["Betplay"],
+        reference_bookmakers=["Pinnacle"],
+        devig_method="multiplicative",
+        min_ev_pct=1.0,
+        min_reference_books=1,
+        max_totals_point=5.5,
+    )
+    assert any(vb.selection == "over_2.5" for vb in results)

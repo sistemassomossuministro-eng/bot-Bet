@@ -166,6 +166,18 @@ originales se mantienen:
 3. **`value_detection.max_ev_pct` (50% por defecto)** — tope general
    independiente de lo anterior: cualquier EV por encima se descarta con
    WARNING sea cual sea la causa.
+4. **`value_detection.max_totals_point` (5.5 goles por defecto)** — descarta
+   líneas de `totals` con un punto por encima de este valor (ej. "más de 8.5
+   goles"). Se agregó tras un caso real: dos picks de la primera ronda de la
+   DFB-Pokal (Copa de Alemania) sugerían "más de 8.5" y "más de 7.5 goles"
+   con EV positivo y bien calculado — sin cruce de líneas, el punto sí
+   coincidía entre Betplay y el libro de referencia. El problema no es un
+   bug: es que hasta un libro "sharp" como Bet365 dedica menos cuidado a
+   líneas tan extremas/poco apostadas que a la línea principal (2.5), así
+   que confiar en esa cuota como "justa" es más riesgoso, aunque el partido
+   en cuestión (un club amateur contra uno de Bundesliga) sí pueda terminar
+   en goleada. Pon `max_totals_point: null` en `config.yaml` si prefieres
+   ver esas líneas de todos modos.
 
 De todos modos, vale la pena revisar el log las primeras corridas después de
 activar un mercado nuevo, buscando la palabra "descarta" — si aparece muy
