@@ -51,8 +51,21 @@ _MARKET_NAME_MAP = {
     "Moneyline": "h2h",
     "Over/Under": "totals",
     "Total Goals": "totals",
+    "Totals": "totals",       # nombre real confirmado en la documentación de odds-api.io
     "Handicap": "spreads",
     "Asian Handicap": "spreads",
+    "Spread": "spreads",      # nombre real confirmado en la documentación de odds-api.io — sin este
+                               # alias, el fallback (minúsculas) lo normalizaría a "spread" (singular),
+                               # que NO calza con "spreads" (plural) usado en el resto del código
+                               # (settlement.py, allowed_markets, etc.) y la línea quedaría descartada
+                               # en silencio por no matchear ningún mercado permitido.
+    "Both Teams To Score": "btts",  # nombre real confirmado con el usuario vía GET /markets?sport=
+                               # football (ago-2026): existe, shape "yesno" (sin línea/hdp — es una
+                               # proposición fija sí/no). Variantes de medio tiempo/2do tiempo
+                               # ("Both Teams To Score HT"/"...2H") se dejan SIN mapear a propósito:
+                               # caen al fallback genérico (ej. "both_teams_to_score_ht"), que no
+                               # calza con ningún valor de allowed_markets, así que quedan excluidas
+                               # sin necesitar una lista de bloqueo aparte.
 }
 
 
@@ -60,22 +73,43 @@ def _normalize_market_key(raw_name: str) -> str:
     return _MARKET_NAME_MAP.get(raw_name, raw_name.strip().lower().replace(" ", "_").replace("/", "_"))
 
 
+# Claves de una línea de cuotas que NUNCA son un precio apostable, así que se
+# excluyen explícitamente al armar los Outcome (además del filtro por
+# float() más abajo, que solo atrapa strings no numéricos como URLs/labels).
+# 'hdp' y 'max' son numéricos (el filtro de float() los dejaría pasar si no
+# se excluyeran a propósito) — confirmado contra la documentación real de
+# odds-api.io (docs.odds-api.io/api-reference/openapi.json, ago-2026).
+_NON_OUTCOME_KEYS = {"hdp", "point", "max", "updatedAt"}
+
+
 def _parse_odds_line(line: dict, market_key: Optional[str] = None) -> List[Outcome]:
     """Convierte un dict de una línea de cuotas (ej. {'home': '2.10', 'draw': '3.40', 'away': '3.20'})
-    en una lista de Outcome. Si la línea trae un 'point' (totales/hándicap), se anexa al nombre
-    del resultado para distinguir líneas distintas del mismo mercado (ej. 'over_2.5').
+    en una lista de Outcome. Si la línea trae un valor de línea (totales/hándicap), se anexa al
+    nombre del resultado para distinguir líneas distintas del mismo mercado (ej. 'over_2.5').
 
-    Para 'totals'/'spreads' un 'point' es obligatorio: sin él, dos líneas de puntos
-    distintos (ej. "más de 0.5 goles" y "más de 4.5 goles") colapsarían al mismo
-    nombre de resultado ("over") y terminarían comparándose entre sí como si fueran
-    la misma apuesta — así se descubrió, en producción, un bug que producía EV de
-    +700% (un pick "over 8.5" evaluado con la probabilidad justa de un "over 2.5"
-    completamente distinto). Se descarta la línea entera en ese caso, en vez de
-    arriesgar ese cruce silencioso."""
-    point = line.get("point")
+    El campo con ese valor de línea se llama 'hdp' en la API real de
+    odds-api.io — NO 'point' (la documentación pública, consultada ago-2026,
+    lo confirma: "no separate 'point' field; the numeric value resides in
+    hdp", igual para totals que para spreads). El código original asumía
+    'point' sin haberlo verificado contra la respuesta real (la documentación
+    pública solo mostraba un ejemplo completo del mercado 1X2) — eso hizo que,
+    en producción, TODA línea de totals/spreads se descartara siempre (el
+    campo 'point' que buscaba nunca existía), no solo las que de verdad
+    tenían datos incompletos. Se sigue aceptando 'point' como alias de
+    respaldo por si algún bookmaker lo manda con ese nombre.
+
+    Para 'totals'/'spreads', tener un valor de línea sigue siendo obligatorio:
+    sin él, dos líneas de puntos distintos (ej. "más de 0.5 goles" y "más de
+    4.5 goles") colapsarían al mismo nombre de resultado ("over") y
+    terminarían comparándose entre sí como si fueran la misma apuesta — así
+    se descubrió, en producción, un bug que producía EV de +700% (un pick
+    "over 8.5" evaluado con la probabilidad justa de un "over 2.5"
+    completamente distinto). Se descarta la línea entera en ese caso, en vez
+    de arriesgar ese cruce silencioso."""
+    point = line.get("hdp", line.get("point"))
     if point is None and market_key in ("totals", "spreads"):
         logger.warning(
-            "Línea de '%s' sin 'point' — se descarta para no cruzar resultados de líneas distintas: %s",
+            "Línea de '%s' sin 'hdp' — se descarta para no cruzar resultados de líneas distintas: %s",
             market_key,
             line,
         )
@@ -83,13 +117,19 @@ def _parse_odds_line(line: dict, market_key: Optional[str] = None) -> List[Outco
 
     outcomes = []
     for key, value in line.items():
-        if key == "point":
+        if key in _NON_OUTCOME_KEYS or key.endswith("Link"):
             continue
         try:
             price = float(value)
         except (TypeError, ValueError):
             continue
-        name = f"{key}_{point}" if point is not None else key
+        # Normaliza mayúsculas/minúsculas del nombre de resultado (ej. por si
+        # algún bookmaker manda "Yes"/"No" en vez de "yes"/"no" para mercados
+        # tipo "yesno" como 'btts') — todos los ejemplos reales vistos hasta
+        # ahora (h2h, totals) ya venían en minúsculas, así que esto no cambia
+        # nada para ellos y solo agrega robustez para mercados nuevos.
+        outcome_key = key.lower()
+        name = f"{outcome_key}_{point}" if point is not None else outcome_key
         outcomes.append(Outcome(name=name, price_decimal=price))
     return outcomes
 

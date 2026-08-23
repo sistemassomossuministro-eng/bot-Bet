@@ -68,3 +68,33 @@ def test_spreads_push():
 def test_unsupported_market():
     result, _ = settle_selection("player_props", "anytime_scorer", 1, 1)
     assert result == "unsupported"
+
+
+def test_btts_yes_wins_when_both_score():
+    result, _ = settle_selection("btts", "yes", 2, 1)
+    assert result == "won"
+
+
+def test_btts_yes_loses_when_one_team_does_not_score():
+    result, _ = settle_selection("btts", "yes", 2, 0)
+    assert result == "lost"
+
+
+def test_btts_no_wins_when_one_team_does_not_score():
+    result, _ = settle_selection("btts", "no", 3, 0)
+    assert result == "won"
+
+
+def test_btts_no_wins_on_scoreless_draw():
+    result, _ = settle_selection("btts", "no", 0, 0)
+    assert result == "won"
+
+
+def test_btts_no_loses_when_both_score():
+    result, _ = settle_selection("btts", "no", 1, 1)
+    assert result == "lost"
+
+
+def test_btts_unknown_selection():
+    result, _ = settle_selection("btts", "over", 1, 1)
+    assert result == "unsupported"

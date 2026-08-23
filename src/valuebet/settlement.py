@@ -1,11 +1,12 @@
 """Determina si una selección ganó, perdió o empujó (push) a partir del marcador final.
 
-Soporta los 3 tipos de mercado que produce el sistema (ver `_MARKET_NAME_MAP` en
+Soporta los 4 tipos de mercado que produce el sistema (ver `_MARKET_NAME_MAP` en
 odds_provider.py y `_parse_odds_line`):
 
 - h2h (1x2 / moneyline): selección en {"home", "draw", "away"}.
 - totals (over/under): selección con forma "over_<punto>" / "under_<punto>".
 - spreads (hándicap): selección con forma "home_<punto>" / "away_<punto>".
+- btts (ambos anotan / "Both Teams To Score"): selección en {"yes", "no"}.
 
 Si el market_key o el nombre de la selección no calzan con ninguno de estos
 patrones, se devuelve 'unsupported' en vez de arriesgar un veredicto incorrecto.
@@ -65,5 +66,13 @@ def settle_selection(
         home_covers = adjusted_home > adjusted_away
         won = (side == "home" and home_covers) or (side == "away" and not home_covers)
         return ("won" if won else "lost"), f"ajustado {adjusted_home:.1f}-{adjusted_away:.1f} ({side} {point:+})"
+
+    if market_key == "btts":
+        if selection not in ("yes", "no"):
+            return "unsupported", f"selección desconocida para btts: {selection}"
+        both_scored = home_score > 0 and away_score > 0
+        actual = "yes" if both_scored else "no"
+        detail = f"marcador {home_score}-{away_score} -> ¿ambos anotaron? {actual}"
+        return ("won" if selection == actual else "lost"), detail
 
     return "unsupported", f"market_key no soportado para liquidación automática: {market_key}"

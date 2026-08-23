@@ -38,6 +38,14 @@ def test_spreads_away_positive():
     assert desc == "Nacional con hándicap +1.5"
 
 
+def test_btts_yes():
+    assert describe_selection("btts", "yes", "Millonarios", "Nacional") == "Ambos equipos anotan"
+
+
+def test_btts_no():
+    assert describe_selection("btts", "no", "Millonarios", "Nacional") == "No anotan ambos equipos"
+
+
 def test_unknown_market_falls_back_gracefully():
     desc = describe_selection("player_props", "anytime_scorer", "Millonarios", "Nacional")
     assert "anytime_scorer" in desc

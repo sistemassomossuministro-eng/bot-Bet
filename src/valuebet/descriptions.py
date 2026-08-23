@@ -14,6 +14,7 @@ MARKET_LABELS = {
     "h2h": "Resultado (1X2)",
     "totals": "Total de goles",
     "spreads": "Hándicap asiático",
+    "btts": "Ambos anotan",
 }
 
 
@@ -48,6 +49,13 @@ def describe_selection(market_key: str, selection: str, home_team: str, away_tea
         if point is not None and side in ("home", "away"):
             team = home_team if side == "home" else away_team
             return f"{team} con hándicap {point:+.1f}"
+        return f"{market_label(market_key)}: {selection}"
+
+    if market_key == "btts":
+        if selection == "yes":
+            return "Ambos equipos anotan"
+        if selection == "no":
+            return "No anotan ambos equipos"
         return f"{market_label(market_key)}: {selection}"
 
     return f"{market_key}: {selection}"

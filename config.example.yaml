@@ -72,12 +72,21 @@ value_detection:
   devig_method: multiplicative   # multiplicative | shin
   min_ev_pct: 3.0                # EV mínimo (%) para generar una alerta
   min_reference_books: 1         # mínimo de libros de referencia requeridos para confiar en la cuota
-  allowed_markets: ["h2h"]       # mercados habilitados: "h2h" (1X2), "totals" (total de goles), "spreads" (hándicap).
-                                  # SOLO h2h por defecto — en producción, "totals"/"spreads" llegaron a producir
-                                  # EV de +700% por un bug real de parseo de líneas (ver README, "Mercados
-                                  # soportados"). No agregues "totals"/"spreads" hasta confirmar que tu corrida
-                                  # ya no descarta líneas por falta de 'point' (revisa el log por
-                                  # "se descarta para no cruzar resultados de líneas distintas").
+  allowed_markets: ["h2h", "totals", "btts"]  # mercados habilitados: "h2h" (1X2), "totals" (total de
+                                  # goles/"más-menos"), "btts" (ambos anotan), "spreads" (hándicap).
+                                  # "totals" se sumó tras arreglar la causa raíz real: el código buscaba
+                                  # un campo 'point' que la API JAMÁS envía — el campo real se llama
+                                  # 'hdp' (confirmado contra la documentación oficial de odds-api.io), así
+                                  # que TODA línea de totals se descartaba siempre, no solo las incompletas. Con
+                                  # el campo correcto ('hdp'), la protección contra el cruce de líneas de gol
+                                  # distintas (que causó el bug de EV +700%) sigue activa exactamente igual — ver
+                                  # README, "Mercados soportados". "btts" (ambos anotan / "Both Teams To
+                                  # Score") se confirmó vía GET /markets?sport=football — existe, sin línea
+                                  # (proposición fija sí/no), así que no le aplica el riesgo de cruce de
+                                  # líneas de totals/spreads. "spreads" (hándicap) no se activó por
+                                  # defecto porque no se pidió explícitamente, pero el mismo arreglo aplica —
+                                  # puedes sumarlo si lo necesitas. Igual, revisa el log las primeras corridas
+                                  # por si aparece "se descarta para no cruzar resultados de líneas distintas".
   max_ev_pct: 50.0                # red de seguridad: un EV por encima de esto casi nunca es valor real —
                                    # se descarta y se deja registro en el log en vez de mostrarse como pick.
 

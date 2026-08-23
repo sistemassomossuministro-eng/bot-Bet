@@ -122,42 +122,66 @@ total** (target + reference combinados) — con Betplay + Bet365 ya se ocupan
 los dos cupos, así que agregar una tercera casa (otra target o otra
 reference) probablemente exige subir de plan.
 
-### Mercados soportados: por ahora solo 1X2 (h2h)
+### Mercados soportados: 1X2 (h2h), totales ("más/menos goles") y ambos anotan (btts)
 
 Otro problema real descubierto en producción, más serio que los dos
 anteriores: los primeros picks reales que llegaron traían **EV de +300% a
 +760%** en mercados de "Total de goles" — cifras que no son valor real, son
-un bug. La causa: odds-api.io publica el total de goles como varias líneas
-separadas por punto (más de/menos de 0.5, 1.5, 2.5, 3.5... goles), pero para
-algunas de esas líneas el campo `point` no venía en la respuesta. Sin ese
-dato, dos líneas completamente distintas (ej. "menos de 0.5 goles", muy poco
-probable, y "menos de 8.5 goles", casi segura) colapsaban al mismo nombre
-interno ("under") y el sistema terminaba comparando la cuota de una línea
-contra la probabilidad justa de otra — de ahí el EV disparatado.
+un bug. La causa raíz original que se identificó: odds-api.io publica el
+total de goles como varias líneas separadas por punto (más de/menos de 0.5,
+1.5, 2.5, 3.5... goles), y el código buscaba ese valor en un campo `point`.
+Sin ese dato, dos líneas completamente distintas (ej. "menos de 0.5 goles",
+muy poco probable, y "menos de 8.5 goles", casi segura) colapsaban al mismo
+nombre interno ("under") y el sistema terminaba comparando la cuota de una
+línea contra la probabilidad justa de otra — de ahí el EV disparatado.
 
-Se corrigió en dos capas:
+La primera corrección (descartar la línea si no traía `point`) frenó el
+síntoma, pero dejó totals/spreads deshabilitados por precaución. Más
+adelante se encontró la causa raíz exacta: **el campo nunca se llamó
+`point`** — la documentación oficial de odds-api.io
+(`docs.odds-api.io/api-reference/openapi.json`) confirma que el valor de la
+línea viaja en un campo llamado **`hdp`**, tanto para `totals` como para
+`spreads`. El código nunca lo había verificado contra la respuesta real (la
+documentación pública solo mostraba un ejemplo completo del mercado 1X2), así
+que la condición "sin `point`" era **siempre** verdadera — toda línea de
+totals se descartaba, no solo las incompletas. Esto también reveló otro
+problema menor: el nombre real del mercado de hándicap es `"Spread"`
+(singular), que sin un alias explícito se normalizaba a `"spread"` en vez de
+`"spreads"` (el valor usado en el resto del código) y quedaba fuera de
+`allowed_markets` sin ningún aviso.
 
-1. **`odds_provider.py` ya no acepta una línea de `totals`/`spreads` sin
-   `point`** — la descarta y deja un WARNING en el log en vez de arriesgar
-   ese cruce. Esto evita el bug de raíz, pero no confirma que el resto del
-   parseo de esas líneas (nombres, formatos) sea 100% correcto — solo se
-   verificó a fondo contra la documentación pública el mercado 1X2 (ver el
-   comentario al inicio de `odds_provider.py`).
-2. **`value_detection.allowed_markets` queda en `["h2h"]` por defecto** —
-   como red de seguridad adicional, totals/spreads quedan deshabilitados
-   hasta que alguien confirme, revisando el log de varias corridas reales,
-   que esas líneas ya no se están descartando por falta de `point` y que los
-   EV que producen son razonables (unos pocos %, no cientos).
-3. **`value_detection.max_ev_pct` (50% por defecto)** — un tope general,
-   independiente del punto anterior: cualquier EV por encima de eso se
-   descarta con un WARNING en vez de mostrarse como pick, sea cual sea la
-   causa. Ningún value bet real y bien calculado se acerca a eso.
+Con el campo correcto (`odds_provider.py` ahora lee `hdp`, con `point` como
+alias de respaldo), la protección contra el cruce de líneas de gol distintas
+sigue exactamente igual — solo que ahora las líneas SÍ tienen su valor de
+línea real, en vez de descartarse siempre. Las tres capas de seguridad
+originales se mantienen:
 
-Si quieres habilitar totals/spreads más adelante: agrégalos a
-`allowed_markets`, corre el workflow manualmente un par de días, y revisa el
-log buscando la palabra "descarta" — si no aparece nada y los EV de esos
-mercados se ven razonables, es una señal razonable de que el parseo está
-funcionando bien para tu cobertura de ligas.
+1. **`odds_provider.py` descarta cualquier línea de `totals`/`spreads` sin
+   `hdp` (ni `point` de respaldo)** — WARNING en el log, nunca arriesga el
+   cruce.
+2. **`value_detection.allowed_markets`**: ahora incluye `"totals"` y
+   `"btts"` por defecto (`["h2h", "totals", "btts"]`) — `"spreads"`
+   (hándicap) no se activó por defecto por no haberse pedido explícitamente,
+   pero el mismo arreglo aplica y se puede sumar.
+3. **`value_detection.max_ev_pct` (50% por defecto)** — tope general
+   independiente de lo anterior: cualquier EV por encima se descarta con
+   WARNING sea cual sea la causa.
+
+De todos modos, vale la pena revisar el log las primeras corridas después de
+activar un mercado nuevo, buscando la palabra "descarta" — si aparece muy
+seguido para tu cobertura de ligas, puede indicar que algún bookmaker manda
+el campo con otro nombre distinto a `hdp`/`point` que todavía no se cubrió.
+
+**Ambos anotan (btts / "Both Teams To Score")**: a diferencia de
+totals/spreads, no es una línea con un valor numérico (no lleva `hdp`) sino
+una proposición fija con dos resultados, "sí" o "no" — el usuario confirmó
+con una consulta real a `GET /markets?sport=football` que odds-api.io sí lo
+ofrece para fútbol (`shape: "yesno"`), así que se agregó siguiendo la misma
+disciplina de las otras correcciones: nunca adivinar el nombre de un campo o
+mercado, verificarlo contra una respuesta real primero. La liquidación
+automática (`settlement.py`) marca "sí" como ganador cuando ambos equipos
+anotaron al menos un gol (según el marcador final) y "no" en cualquier otro
+caso.
 
 ### "Las 10 mejores", no partidos al azar
 
