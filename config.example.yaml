@@ -100,7 +100,9 @@ value_detection:
 daily:
   num_picks: 10                  # cantidad de picks a enviar cada mañana — son los 10 de MAYOR EV encontrados, nunca al azar
   max_picks_per_event: 1         # diversifica: máx. 1 selección por partido (se relaja si no alcanzan picks distintos)
-  send_hour_local: "07:00"       # informativo — la hora real la define el cron de GitHub Actions
+  send_hour_local: "07:05"       # informativo — la hora real la define el cron de GitHub Actions
+                                  # (daily.yml) — se corrió unos minutos después de la hora en punto
+                                  # a propósito, ver la nota en ese archivo.
   timezone: "America/Bogota"
   settlement_max_age_days: 5     # si un evento no liquida en N días (aplazado, sin datos), se marca 'unsettled_expired'
   lookahead_days: 1              # ventana de partidos a evaluar cada mañana (mundial, todas las ligas)

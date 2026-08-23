@@ -1,10 +1,20 @@
 name: Resumen diario de BotBet
 
-# 07:00 hora de Bogotá = 12:00 UTC todo el año (Colombia no tiene horario de
+# ~07:05 hora de Bogotá = 12:05 UTC todo el año (Colombia no tiene horario de
 # verano). Se puede disparar manualmente desde la pestaña Actions con "Run workflow".
+#
+# NOTA: originalmente estaba en "0 12 * * *" (exacto a la hora en punto). Se
+# corrió con eso el primer día real y el cron NUNCA se disparó (confirmado:
+# las 9 corridas del historial fueron todas manuales, "Manually run by...").
+# GitHub documenta que el inicio de cada hora es un horario de alta carga
+# para triggers 'schedule' — muchísimos repos programan sus crons justo en
+# ':00', así que esas corridas se demoran o a veces no llegan a dispararse
+# ese ciclo. Mover el minuto a ':05' reduce la probabilidad de chocar con esa
+# congestión — mismo principio ya aplicado en clv_snapshot.yml (minuto 30),
+# aunque ahí era para evitar un choque de git push, no de GitHub mismo.
 on:
   schedule:
-    - cron: "0 12 * * *"
+    - cron: "5 12 * * *"
   workflow_dispatch: {}
 
 # Necesario para que el job pueda hacer commit/push de la base de datos y las
