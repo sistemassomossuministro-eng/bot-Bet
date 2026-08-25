@@ -76,14 +76,22 @@ def main() -> None:
 
     # 2) Con un fixture_id real (sacado de la respuesta base), probar el
     #    endpoint de detalle que menciona la página pública de PlayerElo.
+    #    Preferimos uno CON elo/probabilidades ya calculadas (no null) para
+    #    ver el campo 'scoreline_distribution' realmente poblado, no vacío.
     fixture_id = None
     if isinstance(base_predictions, list):
-        for item in base_predictions:
+        with_elo = [
+            item
+            for item in base_predictions
+            if isinstance(item, dict) and item.get("fixture_id") is not None and item.get("p_home") is not None
+        ]
+        pool = with_elo or base_predictions
+        for item in pool:
             if isinstance(item, dict) and item.get("fixture_id") is not None:
                 fixture_id = item["fixture_id"]
                 break
     if fixture_id is not None:
-        print(f"\n{'=' * 70}\nGET /v1/fixtures/{fixture_id}/prediction\n{'=' * 70}")
+        print(f"\n{'=' * 70}\nGET /v1/fixtures/{fixture_id}/prediction (elegido con p_home no-nulo si había alguno)\n{'=' * 70}")
         try:
             _print(provider.raw_get(f"/v1/fixtures/{fixture_id}/prediction"))
         except Exception as exc:  # noqa: BLE001
