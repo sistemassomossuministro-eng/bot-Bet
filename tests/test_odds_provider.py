@@ -16,6 +16,20 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from valuebet.odds_provider import OddsApiIoProvider, _normalize_market_key, _parse_odds_line
 
+MINIMAL_EVENT_TEMPLATE = {
+    "sport": {"name": "football"},
+    "league": {"name": "x"},
+    "home": "Local",
+    "away": "Visita",
+    "date": "2026-08-25T20:00:00Z",
+    "status": "pending",
+    "bookmakers": {},
+}
+
+
+def _event_json(event_id: str) -> dict:
+    return dict(MINIMAL_EVENT_TEMPLATE, id=event_id)
+
 
 def _make_response(status_code, json_data=None, text=""):
     resp = MagicMock()
@@ -167,6 +181,81 @@ def test_parse_odds_line_btts_normalizes_case():
     outcomes = _parse_odds_line(line, market_key="btts")
     names = {o.name for o in outcomes}
     assert names == {"yes", "no"}
+
+
+def test_list_events_with_multiple_leagues_makes_one_call_per_league():
+    """Bug real de producción (ago-2026): GET /events?league=a,b,c devolvía
+    404 'League not found' — el parámetro 'league' de ese endpoint solo
+    acepta UN string (confirmado contra el spec oficial de odds-api.io), no
+    una lista separada por comas. Con 15 ligas de fútbol curadas activas,
+    esto dejaba el resumen diario sin NINGÚN evento. El fix: una llamada a
+    /events por liga, combinando los resultados."""
+    provider = OddsApiIoProvider(api_key="fake-key")
+    leagues = ["colombia-liga-dimayor-finalizacion", "england-premier-league", "spain-laliga"]
+
+    responses = [
+        _make_response(200, [_event_json("evt-co-1")]),
+        _make_response(200, [_event_json("evt-eng-1")]),
+        _make_response(200, [_event_json("evt-esp-1")]),
+    ]
+
+    with patch.object(provider._session, "get", side_effect=responses) as mock_get:
+        events = provider.list_events(sport="football", leagues=leagues)
+
+    assert mock_get.call_count == 3
+    called_leagues = [call.kwargs["params"]["league"] for call in mock_get.call_args_list]
+    # Cada llamada debe llevar UNA sola liga (nunca una lista unida por comas).
+    assert called_leagues == leagues
+    assert {e.event_id for e in events} == {"evt-co-1", "evt-eng-1", "evt-esp-1"}
+
+
+def test_list_events_with_multiple_leagues_dedupes_by_event_id():
+    """Si (por lo que sea) el mismo evento apareciera en la respuesta de dos
+    ligas distintas, no debe duplicarse en el resultado final."""
+    provider = OddsApiIoProvider(api_key="fake-key")
+    leagues = ["liga-a", "liga-b"]
+
+    responses = [
+        _make_response(200, [_event_json("evt-shared"), _event_json("evt-a")]),
+        _make_response(200, [_event_json("evt-shared")]),
+    ]
+
+    with patch.object(provider._session, "get", side_effect=responses):
+        events = provider.list_events(sport="football", leagues=leagues)
+
+    assert {e.event_id for e in events} == {"evt-shared", "evt-a"}
+
+
+def test_list_events_one_league_failing_does_not_block_the_others():
+    """Si una liga individual falla (404, timeout, etc.), las demás ligas
+    deben seguir consultándose — no se debe perder el resumen diario
+    completo por un solo slug de liga con problemas."""
+    provider = OddsApiIoProvider(api_key="fake-key")
+    leagues = ["liga-rota", "liga-ok"]
+
+    def fake_get(url, params=None, timeout=None):
+        if params["league"] == "liga-rota":
+            return _make_response(404, text='{"error":"League not found"}')
+        return _make_response(200, [_event_json("evt-ok")])
+
+    with patch.object(provider._session, "get", side_effect=fake_get):
+        events = provider.list_events(sport="football", leagues=leagues)
+
+    assert {e.event_id for e in events} == {"evt-ok"}
+
+
+def test_list_events_without_leagues_makes_a_single_call_with_no_league_param():
+    """leagues=None (o []) sigue significando 'todas las ligas' -> una sola
+    llamada, sin el parámetro 'league' -- comportamiento sin cambios."""
+    provider = OddsApiIoProvider(api_key="fake-key")
+    ok_resp = _make_response(200, [_event_json("evt-1"), _event_json("evt-2")])
+
+    with patch.object(provider._session, "get", return_value=ok_resp) as mock_get:
+        events = provider.list_events(sport="football", leagues=None)
+
+    assert mock_get.call_count == 1
+    assert "league" not in mock_get.call_args.kwargs["params"]
+    assert {e.event_id for e in events} == {"evt-1", "evt-2"}
 
 
 def test_get_retries_on_server_error_5xx():

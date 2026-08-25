@@ -168,6 +168,62 @@ def test_settle_pending_daily_picks_expires_old_unsettled():
         assert row["result"] == "unsettled_expired"
 
 
+class _ProviderThatAlwaysFailsResult:
+    """Simula un evento cuyo event_id ya no existe en el proveedor (404
+    'Event not found' — visto en producción, ago-2026): get_event_result
+    siempre lanza una excepción."""
+
+    def list_events(self, sport, leagues=None, lookahead_days=3, limit=None):
+        return []
+
+    def get_event_odds(self, event_id, bookmakers):
+        raise NotImplementedError
+
+    def get_events_odds(self, event_ids, bookmakers):
+        raise NotImplementedError
+
+    def get_event_result(self, event_id):
+        raise RuntimeError("404 Event not found")
+
+
+def test_settle_pending_daily_picks_expires_old_pick_even_if_provider_query_fails():
+    """Bug real corregido: antes, si get_event_result fallaba (ej. el evento
+    ya no existe en odds-api.io), el pick quedaba pendiente PARA SIEMPRE —
+    nunca llegaba a chequear settlement_max_age_days porque el 'continue' del
+    except lo saltaba. Ahora debe expirar igual que un pick que simplemente
+    nunca recibe resultado."""
+    with tempfile.TemporaryDirectory() as tmp:
+        storage = Storage(str(Path(tmp) / "t.db"))
+        old_date = (datetime.utcnow() - timedelta(days=10)).date().isoformat()
+        vb = make_vb("evtE", 5.0, "home")
+        storage.add_daily_pick(old_date, vb)
+
+        provider = _ProviderThatAlwaysFailsResult()
+        cfg = _cfg(settlement_max_age_days=5)
+        settle_pending_daily_picks(cfg, provider, storage, today=datetime.utcnow().date())
+
+        row = storage.get_daily_pick(1)
+        assert row["result"] == "unsettled_expired"
+
+
+def test_settle_pending_daily_picks_leaves_recent_pick_pending_when_provider_query_fails():
+    """El mismo fallo de consulta, pero un pick reciente (dentro del margen)
+    debe seguir pendiente (para reintentar mañana), no expirar de una vez."""
+    with tempfile.TemporaryDirectory() as tmp:
+        storage = Storage(str(Path(tmp) / "t.db"))
+        yesterday = (datetime.utcnow() - timedelta(days=1)).date().isoformat()
+        vb = make_vb("evtF", 5.0, "home")
+        storage.add_daily_pick(yesterday, vb)
+
+        provider = _ProviderThatAlwaysFailsResult()
+        cfg = _cfg(settlement_max_age_days=5)
+        settled = settle_pending_daily_picks(cfg, provider, storage, today=datetime.utcnow().date())
+
+        assert settled == []
+        pending = storage.list_pending_picks_before(datetime.utcnow().date().isoformat())
+        assert len(pending) == 1
+
+
 class RecordingProvider:
     """Proveedor falso que solo registra con qué 'leagues' se llamó a list_events
     por cada deporte, sin devolver eventos reales — para probar que

@@ -198,13 +198,25 @@ def settle_pending_daily_picks(cfg: AppConfig, provider: OddsProvider, storage: 
     newly_settled = []
 
     for row in pending:
+        # Bug real observado en producción (ago-2026): antes, si esta consulta
+        # fallaba (ej. 404 "Event not found" — odds-api.io ya purgó el evento
+        # de su historial), el código hacía `continue` inmediatamente, SIN
+        # pasar por el chequeo de antigüedad de abajo. Eso significaba que un
+        # pick cuyo evento ya no existe en el proveedor quedaba pendiente PARA
+        # SIEMPRE: cada corrida diaria repetía la misma consulta, fallaba
+        # igual, y volvía a loguear el mismo traceback como ERROR sin parar —
+        # nunca llegaba a `settlement_max_age_days` para expirar. Ahora, una
+        # consulta fallida se trata igual que "aún sin resultado": sigue
+        # intentando en corridas futuras, pero si se pasa de
+        # settlement_max_age_days también se marca 'unsettled_expired' como
+        # cualquier otro pick que nunca liquida.
+        result_data = None
         try:
             result_data = provider.get_event_result(row["event_id"])
         except Exception:
             logger.exception("Fallo al consultar resultado del evento %s", row["event_id"])
-            continue
 
-        if result_data.is_settled:
+        if result_data is not None and result_data.is_settled:
             outcome, detail = settle_selection(
                 row["market_key"], row["selection"], result_data.home_score, result_data.away_score
             )
@@ -215,9 +227,10 @@ def settle_pending_daily_picks(cfg: AppConfig, provider: OddsProvider, storage: 
             newly_settled.append(storage.get_daily_pick(row["id"]))
             continue
 
-        # Aún no hay resultado. Si lleva demasiados días pendiente (partido
-        # aplazado/cancelado o el proveedor nunca publicó el marcador), se
-        # marca para no acumular pendientes eternos.
+        # Aún no hay resultado (o falló la consulta). Si lleva demasiados días
+        # pendiente (partido aplazado/cancelado, el proveedor nunca publicó el
+        # marcador, o el evento ya no existe en el proveedor), se marca para
+        # no acumular pendientes eternos.
         pick_day = date.fromisoformat(row["pick_date"])
         age_days = (today - pick_day).days
         if age_days > cfg.daily.settlement_max_age_days:

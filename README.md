@@ -126,6 +126,36 @@ de la API (por ejemplo, si odds-api.io hiciera matching por prefijo en vez de
 exacto, o publicara un slug estable por torneo) — este proyecto no adivina
 esa respuesta, la deja documentada como riesgo abierto.
 
+### 🐛 Bug real (corregido, ago-2026): `GET /events` no acepta varias ligas en una sola llamada
+
+El primer día real con el filtro de 15 ligas de fútbol activo, el resumen
+diario generó **0 picks**. El log de GitHub Actions mostró la causa: la
+llamada a `GET /events` con las 15 ligas unidas por coma
+(`league=colombia-liga-dimayor-finalizacion,argentina-primera-lpf-clausura,...`)
+devolvía `404 {"error":"League not found"}`, así que `list_events` fallaba
+completo para fútbol y el job diario no tenía ningún evento con qué trabajar.
+
+Se confirmó contra el spec oficial
+(`https://docs.odds-api.io/api-reference/openapi.json`) que el parámetro
+`league` de `/events` es un **string único** (`"schema": {"type": "string"}`),
+sin soporte documentado para valores separados por coma, parámetros repetidos
+ni arrays — a diferencia de otro endpoint distinto
+(`/historical/closing-lines`), que sí acepta un parámetro `leagues` (plural)
+con comas. El código original (`odds_provider.py::list_events`) nunca había
+sido puesto a prueba con más de una liga real: antes de esta feature, ese
+parámetro solo se usaba con 0 ligas (fútbol sin filtro) o exactamente 1 liga
+(`usa-nba` para basketball).
+
+**Fix aplicado**: `list_events` ahora hace **una llamada a `/events` por
+liga** cuando hay más de una configurada, y combina/deduplica los eventos
+resultantes por `event_id`. Si una liga individual falla (ej. un slug que
+cambió — ver los dos riesgos de arriba), esa liga se omite y se sigue con las
+demás, en vez de perder el resumen diario completo por un solo slug con
+problemas. Esto multiplica las llamadas a `/events` por la cantidad de ligas
+del deporte (15 para fútbol) — aceptable porque el único consumidor real en
+producción es el job diario (GitHub Actions, una vez al día), no un loop
+continuo.
+
 Antes de activar un deporte nuevo, verifica igual que con las casas de
 apuestas (ver más abajo) que tanto tu casa objetivo como tu libro de
 referencia efectivamente tengan cuotas para ese deporte/liga en odds-api.io —

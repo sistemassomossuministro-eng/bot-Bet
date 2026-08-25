@@ -176,8 +176,13 @@ daily:
                                   # (daily.yml) — se corrió unos minutos después de la hora en punto
                                   # a propósito, ver la nota en ese archivo.
   timezone: "America/Bogota"
-  settlement_max_age_days: 5     # si un evento no liquida en N días (aplazado, sin datos), se marca 'unsettled_expired'
-  lookahead_days: 1              # ventana de partidos a evaluar cada mañana (mundial, todas las ligas)
+  settlement_max_age_days: 5     # si un evento no liquida en N días (aplazado, sin datos, o el proveedor ya no
+                                  # tiene el evento -> 404 al consultarlo), se marca 'unsettled_expired'. Esto
+                                  # aplica también si la CONSULTA del resultado falla repetidamente (ver el bug
+                                  # real corregido en ago-2026 en daily.py::settle_pending_daily_picks: antes,
+                                  # un 404 permanente dejaba el pick pendiente para siempre en vez de expirarlo).
+  lookahead_days: 1              # ventana de partidos a evaluar cada mañana (dentro de las ligas configuradas
+                                  # en leagues_by_sport — ver "Alcance" en el README)
   max_events_per_run: 400        # tope de partidos evaluados por corrida — sube esto si tu plan de la API lo permite
   clv_window_hours: 3.0          # CLV (Closing Line Value): ver clv.py y el README. Qué tan cerca del
                                   # arranque de un partido se captura su cuota de "cierre" — el workflow

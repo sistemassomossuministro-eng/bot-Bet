@@ -238,26 +238,63 @@ class OddsApiIoProvider(OddsProvider):
         limit: Optional[int] = None,
     ) -> List[Event]:
         now = datetime.utcnow()
-        params = {
+        base_params = {
             "sport": sport,
             "status": "pending",
             "from": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "to": (now + timedelta(days=lookahead_days)).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "limit": limit or 5000,
         }
+        overall_limit = limit or 5000
+
         # Sin `leagues` (o lista vacía) NO se manda el filtro 'league' -> la API
         # devuelve eventos de TODAS las ligas de fútbol del mundo para las que
         # tenga datos. Este es el modo por defecto del proyecto.
-        if leagues:
-            params["league"] = ",".join(leagues)
+        if not leagues:
+            params = dict(base_params, limit=overall_limit)
+            data = self._get("/events", params)
+            raw_events = data if isinstance(data, list) else data.get("data", data.get("events", []))
+            return [self._parse_event(raw) for raw in raw_events]
 
-        data = self._get("/events", params)
-        raw_events = data if isinstance(data, list) else data.get("data", data.get("events", []))
+        # BUG REAL detectado en producción (ago-2026): el parámetro 'league' de
+        # GET /events acepta un ÚNICO string, NO una lista separada por comas —
+        # confirmado contra el spec oficial (docs.odds-api.io/api-reference/openapi.json:
+        # "league" -> {"schema": {"type": "string"}}, sin soporte documentado
+        # para múltiples valores). El código original hacía
+        # `params["league"] = ",".join(leagues)`, lo cual nunca se había
+        # probado con más de 1 liga real (antes de la curación de ligas de
+        # fútbol, este código solo veía 0 ligas -> None, o 1 liga -> NBA de
+        # basketball). Al activar las 15 ligas de fútbol curadas, la API
+        # devolvió 404 "League not found" para la query combinada, y el job
+        # diario terminó generando 0 picks. (Nota: SÍ existe un parámetro
+        # 'leagues' plural con comas, pero es de OTRO endpoint —
+        # /historical/closing-lines — no de /events).
+        #
+        # Fix: una llamada por liga, combinando y deduplicando por event_id
+        # (un mismo evento no debería aparecer en dos ligas, pero se
+        # deduplica por si acaso). Esto multiplica las llamadas a /events por
+        # la cantidad de ligas configuradas para el deporte — aceptable aquí
+        # porque el job diario (único consumidor real en producción, vía
+        # GitHub Actions) corre una vez al día, no en loop continuo.
+        events_by_id: Dict[str, Event] = {}
+        for league in leagues:
+            params = dict(base_params, league=league, limit=overall_limit)
+            try:
+                data = self._get("/events", params)
+            except Exception:
+                logger.exception(
+                    "Fallo al listar eventos de '%s' para la liga '%s' — se omite esa liga y se sigue con las demás.",
+                    sport,
+                    league,
+                )
+                continue
+            raw_events = data if isinstance(data, list) else data.get("data", data.get("events", []))
+            for raw in raw_events:
+                event = self._parse_event(raw)
+                events_by_id[event.event_id] = event
+            if len(events_by_id) >= overall_limit:
+                break
 
-        events = []
-        for raw in raw_events:
-            events.append(self._parse_event(raw))
-        return events
+        return list(events_by_id.values())[:overall_limit]
 
     def get_event_odds(self, event_id: str, bookmakers: List[str]) -> Event:
         params = {"eventId": event_id, "bookmakers": ",".join(bookmakers)}
