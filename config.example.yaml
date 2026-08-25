@@ -56,6 +56,68 @@ odds_provider:
                                              # basketball. La NBA juega de octubre a junio: en temporada
                                              # baja (verano boreal) es normal que no aparezcan picks de
                                              # este deporte, no es un error.
+    football:                               # filtro curado (agosto 2026) — antes traía TODAS las ligas
+                                             # de fútbol del mundo (cientos, muchas de segunda/tercera
+                                             # división o infantiles con cuotas poco fiables). Ahora solo
+                                             # estas: Colombia, Argentina, Brasil, USA (MLS), México,
+                                             # Big 5 europeas, torneos UEFA y CONMEBOL. Todos los slugs
+                                             # de abajo se verificaron contra una respuesta real de
+                                             # GET /leagues?sport=football (nunca adivinados) — ver el
+                                             # README, "Alcance", para el detalle completo y las dos
+                                             # advertencias de mantenimiento marcadas ⚠️ más abajo.
+      - "colombia-liga-dimayor-finalizacion"   # Colombia — Categoría Primera A (Liga BetPlay Dimayor).
+                                                # OJO: existe también "colombia-torneo-dimayor-clausura"
+                                                # en la respuesta de la API — es la Primera B (segunda
+                                                # división, "Torneo BetPlay Dimayor"), NO la Primera A.
+                                                # Confirmado por nomenclatura oficial de DIMAYOR (Liga =
+                                                # Primera A, Torneo = Primera B) — a propósito NO se
+                                                # incluye acá.
+      - "argentina-primera-lpf-clausura"        # ⚠️ Argentina — Primera División (Liga Profesional de
+                                                 # Fútbol). Se juega en dos mitades por año, Apertura y
+                                                 # Clausura, y la API parece exponer un slug distinto para
+                                                 # cada una (a la fecha de este snapshot, solo "Clausura"
+                                                 # tenía partidos). Cuando termine el Clausura y arranque
+                                                 # el próximo Apertura, este slug puede dejar de traer
+                                                 # partidos — revisa con GET /leagues?sport=football y
+                                                 # agrega/actualiza el slug vigente si el pick de Argentina
+                                                 # desaparece por varios días seguidos.
+      - "brazil-brasileiro-serie-a"              # Brasil — Brasileirão Serie A. Temporada única (sin
+                                                  # split Apertura/Clausura), no debería tener este riesgo.
+      - "usa-mls"                                 # USA — MLS. A propósito NO se incluye la USL
+                                                    # Championship (el primer pick real de este proyecto
+                                                    # fue justamente un partido de USL) — decisión explícita
+                                                    # del usuario de acotar a solo MLS.
+      - "mexico-liga-mx-apertura"                 # ⚠️ México — Liga MX. Mismo riesgo que Argentina: se
+                                                    # juega en Apertura/Clausura y la API parece nombrar el
+                                                    # slug por mitad de temporada (a la fecha de este
+                                                    # snapshot, solo "Apertura" tenía partidos). Revisa y
+                                                    # actualiza cuando cambie de mitad.
+      - "england-premier-league"                  # Big 5 europeas — temporada única (agosto-mayo), sin
+      - "spain-laliga"                             # el riesgo de Apertura/Clausura de arriba.
+      - "italy-serie-a"
+      - "germany-bundesliga"
+      - "france-ligue-1"
+      - "international-clubs-uefa-champions-league-playoff-round"   # ⚠️ Torneos UEFA — a la fecha de
+      - "international-clubs-uefa-europa-league-playoff-round"      # este snapshot (ago. 2026) la API
+      - "international-clubs-uefa-conference-league-playoff-round"  # solo mostraba slugs de la fase
+                                                                      # "Playoff Round" para las 3 copas
+                                                                      # UEFA. NO está confirmado si el
+                                                                      # slug es estable para todo el
+                                                                      # torneo o si cambia por fase (ej.
+                                                                      # "League Phase", "Round of 16") —
+                                                                      # es el mismo patrón de riesgo que
+                                                                      # Argentina/México arriba, pero acá
+                                                                      # ni siquiera hay una fase "de
+                                                                      # temporada completa" visible en el
+                                                                      # snapshot. Antes de confiar en esto
+                                                                      # a largo plazo, vuelve a pedir
+                                                                      # GET /leagues?sport=football cuando
+                                                                      # el torneo entre a la fase de
+                                                                      # grupos/liga y compara los slugs.
+      - "international-clubs-conmebol-libertadores-knockout-stage"  # ⚠️ Mismo riesgo que arriba, para
+      - "international-clubs-conmebol-sudamericana-knockout-stage"  # Libertadores/Sudamericana — a la
+                                                                      # fecha del snapshot solo aparecía
+                                                                      # la fase "Knockout stage".
   poll_interval_seconds: 120
   lookahead_days: 3
   bookmaker_links: {}            # opcional: {"Betplay": "https://tu-url-verificada.../"} para que cada
@@ -96,6 +158,16 @@ value_detection:
                                    # dedica menos cuidado a líneas tan extremas/poco apostadas que a la
                                    # línea principal (2.5), así que confiar en esa cuota como "justa" es más
                                    # riesgoso. Pon `null` para desactivar este tope si quieres ver esas líneas.
+  min_odds: 1.40                  # filtro general de rango de CUOTA ofrecida (target_bookmakers), aplica
+  max_odds: 3.00                  # a TODOS los mercados habilitados (h2h, totals, btts...), no solo
+                                   # totals. Mismo problema de fondo que max_totals_point pero más
+                                   # amplio: un resultado poco probable es más difícil de calibrar bien —
+                                   # un error chico en la probabilidad estimada se magnifica mucho más en
+                                   # una cuota alta que cerca de evens (ver el README, "Rango de cuota",
+                                   # para el detalle con ejemplos numéricos). 1.40–3.00: rango conservador
+                                   # recomendado por el propio usuario del proyecto, no un óptimo probado —
+                                   # súbelo (ej. 1.30–5.00) si el volumen diario de picks queda muy bajo.
+                                   # Pon `null` en cualquiera de los dos para desactivar ese tope.
 
 daily:
   num_picks: 10                  # cantidad de picks a enviar cada mañana — son los 10 de MAYOR EV encontrados, nunca al azar
@@ -113,6 +185,37 @@ daily:
                                   # de esta ventana. No necesitas tocar esto salvo que quieras capturas
                                   # más ajustadas al saque inicial (bajando el número) o más margen de
                                   # tolerancia si el proveedor a veces cierra el mercado temprano.
+
+secondary_signals:
+  # Señales adicionales, EXTERNAS al proveedor de cuotas — se consultan solo
+  # para los ~10 picks que YA pasaron el filtro de EV (nunca para los
+  # cientos de partidos candidatos evaluados cada corrida), para caber en
+  # sus planes gratuitos. NINGUNA de las dos ajusta el cálculo de EV — son
+  # puramente informativas/de contexto. Ver el README, "Señales secundarias".
+  #
+  # ESTADO ACTUAL: enabled=False en ambas a propósito. La conectividad (auth,
+  # reintentos) ya está lista, pero el parseo de la respuesta real todavía
+  # NO está escrito — este proyecto ya aprendió (con odds-api.io: Wplay,
+  # Pinnacle, el campo 'hdp') a no adivinar la forma de una API externa.
+  # Antes de activar esto: corre `scripts/verify_playerelo.py` y
+  # `scripts/verify_api_football.py` con tus keys reales y pégale la salida
+  # a Claude para que escriba el parseo definitivo.
+  playerelo:
+    # Segunda opinión independiente (playerelo.football): compara la
+    # probabilidad "justa" del libro de referencia contra la de PlayerElo
+    # (rating Elo por jugador, no por equipo) para cada pick. Gratis:
+    # 500 solicitudes/mes, 10/minuto — ver https://playerelo.football/api-access
+    enabled: false
+    api_key: "TU_PLAYERELO_API_KEY_AQUI"   # o el secreto PLAYERELO_API_KEY
+    base_url: "https://data-api.playerelo.football"
+  injuries:
+    # Nota informativa de bajas/lesiones (api-football.com) junto a cada
+    # pick del mensaje de Telegram. Gratis: 100 solicitudes/día — ver
+    # https://www.api-football.com/pricing
+    enabled: false
+    api_key: "TU_APIFOOTBALL_API_KEY_AQUI"  # o el secreto APIFOOTBALL_API_KEY
+    base_url: "https://v3.football.api-sports.io"
+    via_rapidapi: false   # true si te suscribiste desde RapidAPI en vez de api-football.com directo
 
 alerts:
   telegram:

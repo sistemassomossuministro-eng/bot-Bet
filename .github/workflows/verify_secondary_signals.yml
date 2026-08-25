@@ -1,0 +1,68 @@
+name: Diagnóstico PlayerElo + API-Football
+
+# Workflow de UN SOLO USO manual — corre los scripts scripts/verify_playerelo.py
+# y scripts/verify_api_football.py (ver la nota grande en cada uno) para ver la
+# forma REAL de la respuesta de cada API antes de escribir el parseo
+# definitivo (secondary_signals en config.example.yaml, hoy enabled: false).
+#
+# No toca producción: no lee ni escribe config.yaml, no hace commit/push, no
+# manda nada a Telegram/Instagram. Solo imprime la respuesta cruda de cada
+# API en el log de esta corrida.
+#
+# Cómo correrlo:
+#   1. Settings → Secrets and variables → Actions → agrega PLAYERELO_API_KEY
+#      y APIFOOTBALL_API_KEY con tus keys reales (gratis, ver los links de
+#      "Uso" en cada script).
+#   2. Pestaña Actions → "Diagnóstico PlayerElo + API-Football" → "Run workflow".
+#   3. Cuando termine, abre la corrida y copia TODO el texto de los dos pasos
+#      "Diagnóstico ..." — pégaselo a Claude para que escriba el parseo real.
+#   4. Este workflow puede quedarse en el repo sin usarse — no corre solo
+#      (no tiene 'schedule'), así que no consume tu cuota de API sin que tú
+#      lo dispares a propósito.
+on:
+  workflow_dispatch:
+    inputs:
+      team_name:
+        description: "Equipo a buscar en API-Football (para probar /teams e /injuries)"
+        required: false
+        default: "Real Madrid"
+        type: string
+      via_rapidapi:
+        description: "¿Te suscribiste a API-Football vía RapidAPI en vez de directo?"
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
+      - name: Diagnóstico PlayerElo
+        # No tumba el job si falla (ej. key inválida, endpoint no confirmado
+        # todavía) — igual queremos ver la salida de API-Football después.
+        continue-on-error: true
+        env:
+          PYTHONPATH: src
+          PLAYERELO_API_KEY: ${{ secrets.PLAYERELO_API_KEY }}
+        run: python scripts/verify_playerelo.py
+
+      - name: Diagnóstico API-Football
+        continue-on-error: true
+        env:
+          PYTHONPATH: src
+          APIFOOTBALL_API_KEY: ${{ secrets.APIFOOTBALL_API_KEY }}
+          APIFOOTBALL_VIA_RAPIDAPI: ${{ inputs.via_rapidapi && '1' || '' }}
+        run: python scripts/verify_api_football.py "${{ inputs.team_name }}"

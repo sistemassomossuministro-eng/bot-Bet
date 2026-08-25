@@ -115,6 +115,8 @@ def generate_daily_picks(
         allowed_markets=cfg.value_detection.allowed_markets,
         max_ev_pct=cfg.value_detection.max_ev_pct,
         max_totals_point=cfg.value_detection.max_totals_point,
+        min_odds=cfg.value_detection.min_odds,
+        max_odds=cfg.value_detection.max_odds,
         # Nota: aquí NO se aplican límites de banca/Kelly — el resumen diario es
         # una lista informativa de oportunidades, no una secuencia de apuestas
         # ejecutadas automáticamente una tras otra.

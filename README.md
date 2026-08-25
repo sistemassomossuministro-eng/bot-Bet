@@ -2,9 +2,10 @@
 
 **BotBet** — el nombre juega con **Bot** (todo el pipeline corre solo) + **Bet**
 (apuestas) — es un bot de **análisis** de apuestas deportivas de valor (value
-betting) de **fútbol de todas las ligas del mundo** (Premier League, Champions
-League, Liga MX, Primera A colombiana, lo que sea que cubra el proveedor de
-cuotas), evaluando las cuotas que ofrece **Betplay** contra **Bet365** como
+betting) de fútbol de un conjunto curado de ligas y torneos (Primera A
+colombiana, Argentina, Brasil, MLS, Liga MX, las 5 grandes ligas europeas,
+Champions/Europa/Conference League y Libertadores/Sudamericana — ver
+"Alcance" más abajo), evaluando las cuotas que ofrece **Betplay** contra **Bet365** como
 referencia (ver "Sobre el libro de referencia" más abajo — Pinnacle, el libro
 "sharp" original del diseño, no está disponible en el proveedor de cuotas
 usado). **No coloca apuestas automáticamente.** Cada mañana a las 7:00 (hora
@@ -41,40 +42,97 @@ Este proyecto automatiza la parte que **sí** es legítima y estándar en la
 industria: recolectar cuotas públicas, calcular dónde hay valor estadístico
 (EV positivo) y avisarte. La decisión y el clic final siempre son tuyos.
 
-## Alcance: fútbol mundial + otros deportes opcionales (ej. NBA)
+## Alcance: ligas de fútbol curadas + otros deportes opcionales (ej. NBA)
 
-`odds_provider.sports` es una lista — por defecto `["football"]` con
-`odds_provider.leagues: []` (**a propósito**: "todas las ligas de fútbol para
-las que el proveedor tenga datos", no solo la Primera A colombiana). Agregar
-otro deporte es solo una línea más en `sports` (los slugs válidos están en
-`GET /sports` — con tu key: `https://api.odds-api.io/v3/sports?apiKey=TU_KEY`)
-— el resto del pipeline (parseo de cuotas 1X2, EV, liquidación) ya es genérico
-por deporte, no asume fútbol.
+`odds_provider.sports` es una lista — por defecto `["football"]`. Hasta
+agosto 2026 el filtro de ligas de fútbol quedaba vacío (`leagues: []`, "todas
+las ligas de fútbol para las que el proveedor tenga datos"), pero eso incluía
+cientos de ligas de segunda/tercera división, reservas y categorías
+infantiles con cuotas poco fiables o mercados muy delgados. Ahora fútbol usa
+un filtro curado por decisión explícita del usuario del proyecto: Colombia,
+Argentina, Brasil, USA (solo MLS), México, las 5 grandes ligas europeas
+(Premier League, LaLiga, Serie A, Bundesliga, Ligue 1), y los torneos de
+clubes UEFA (Champions/Europa/Conference League) y CONMEBOL (Libertadores/
+Sudamericana). El filtro completo, con los 15 slugs exactos y comentados uno
+por uno, vive en `leagues_by_sport.football` en `config.example.yaml`.
 
-Lo que sí hay que decidir es el filtro de **ligas**, porque `leagues` es una
-sola lista que se aplica igual a TODOS los deportes en `sports`. Eso funciona
-bien para un solo deporte, pero rompería fútbol si la usaras para restringir
-otro deporte a una sola liga (ej. dejar solo la NBA) — fútbol no tiene ninguna
-liga con ese slug, así que quedaría sin partidos. Para eso existe
-`leagues_by_sport` (opcional): restringe un deporte puntual sin tocar a los
-demás. Ejemplo ya incluido en `config.example.yaml`:
+Agregar otro deporte es solo una línea más en `sports` (los slugs válidos
+están en `GET /sports` — con tu key:
+`https://api.odds-api.io/v3/sports?apiKey=TU_KEY`) — el resto del pipeline
+(parseo de cuotas 1X2, EV, liquidación) ya es genérico por deporte, no asume
+fútbol.
+
+El filtro de **ligas** funciona así: `leagues` es una lista global que se
+aplica a cualquier deporte en `sports` que NO tenga su propia entrada en
+`leagues_by_sport`. Como fútbol y basketball necesitan listas totalmente
+distintas entre sí, ambos tienen su propia entrada y `leagues` queda en `[]`
+sin usarse. Ejemplo (resumido) ya incluido en `config.example.yaml`:
 
 ```yaml
 sports: ["football", "basketball"]
-leagues: []                          # fútbol: todas las ligas del mundo
+leagues: []                          # sin efecto: fútbol y basketball ya tienen
+                                      # su propia entrada en leagues_by_sport
 leagues_by_sport:
+  football:                          # ver la lista completa (15 slugs,
+    - "colombia-liga-dimayor-finalizacion"   # comentada uno por uno) en
+    - "argentina-primera-lpf-clausura"       # config.example.yaml
+    # ...
   basketball: ["usa-nba"]            # basketball: SOLO la NBA (si no, trae
                                       # también NCAA, WNBA, ligas menores...)
 ```
 
-El slug de la NBA (`usa-nba`) se confirma con
-`GET /leagues?sport=basketball&apiKey=TU_KEY`. Antes de activar un deporte
-nuevo, verifica igual que con las casas de apuestas (ver más abajo) que tanto
-tu casa objetivo como tu libro de referencia efectivamente tengan cuotas para
-ese deporte/liga en odds-api.io — que el deporte exista en general no
-garantiza que una casa puntual lo cubra. Ten en cuenta también la temporada:
-la NBA juega de octubre a junio, así que en pleno verano boreal es normal no
-recibir picks de basketball aunque todo esté bien configurado.
+Si en algún momento quieres volver a cobertura mundial de fútbol (todas las
+ligas, sin curar), basta con borrar la entrada `football:` de
+`leagues_by_sport` (o dejarla en `[]`) — el mecanismo ya soporta los dos
+modos, no hace falta tocar código.
+
+### ⚠️ Dos riesgos de mantenimiento del filtro de fútbol
+
+Los 15 slugs se verificaron uno por uno contra una respuesta real de
+`GET /leagues?sport=football` (agosto 2026) — nunca se adivinaron, siguiendo
+la misma disciplina que ya evitó repetir los bugs de Wplay, Pinnacle y el
+campo `hdp` de este proyecto. Aun así, quedaron dos riesgos que esa única
+respuesta no permitió descartar:
+
+1. **Argentina y México juegan en dos mitades de temporada (Apertura /
+   Clausura), y la API parece nombrar el slug de la liga por mitad**, no por
+   temporada completa: en el snapshot, Argentina solo tenía slug para
+   "Clausura" (`argentina-primera-lpf-clausura`) y México solo para
+   "Apertura" (`mexico-liga-mx-apertura`) — no apareció un slug "genérico"
+   sin mitad. Si es así, cuando cada torneo cierre y arranque la otra mitad
+   del año, el slug probablemente cambie de nombre y el filtro deje de traer
+   partidos de ese país **en silencio** (sin error, solo sin picks). Colombia
+   tiene el mismo formato de temporada partida, pero ahí sí se pudo confirmar
+   con certeza cuál de los dos slugs visibles es la Primera A real
+   (`colombia-liga-dimayor-finalizacion` — "Liga DIMAYOR" es la nomenclatura
+   oficial de Primera A, "Torneo DIMAYOR" es la Primera B; ver el comentario
+   en `config.example.yaml`), pero probablemente tenga el mismo riesgo de
+   cambio de slug al pasar de Finalización a Apertura.
+2. **Los torneos UEFA y CONMEBOL solo mostraban un slug por fase actual**, no
+   uno estable para todo el torneo: en el snapshot, las 3 copas UEFA
+   aparecían únicamente como `...-playoff-round`, y Libertadores/Sudamericana
+   como `...-knockout-stage` — no había, por ejemplo, un slug de "fase de
+   grupos/liga" visible para comparar (probablemente porque esa fase no
+   estaba activa en ese momento del calendario).
+
+**Mitigación mientras tanto**: si de un día para otro dejan de aparecer picks
+de Argentina, México, Colombia, o de algún torneo UEFA/CONMEBOL durante
+varios días seguidos (y sí hay partidos reales de por medio), es la primera
+señal de que el slug cambió. Vuelve a pedir
+`GET https://api.odds-api.io/v3/leagues?sport=football&apiKey=TU_KEY`, busca
+la liga/torneo afectado y actualiza el slug en `leagues_by_sport.football`.
+No hay forma de resolver esto de una vez y para siempre sin más información
+de la API (por ejemplo, si odds-api.io hiciera matching por prefijo en vez de
+exacto, o publicara un slug estable por torneo) — este proyecto no adivina
+esa respuesta, la deja documentada como riesgo abierto.
+
+Antes de activar un deporte nuevo, verifica igual que con las casas de
+apuestas (ver más abajo) que tanto tu casa objetivo como tu libro de
+referencia efectivamente tengan cuotas para ese deporte/liga en odds-api.io —
+que el deporte exista en general no garantiza que una casa puntual lo cubra.
+Ten en cuenta también la temporada: la NBA juega de octubre a junio, así que
+en pleno verano boreal es normal no recibir picks de basketball aunque todo
+esté bien configurado.
 
 ### Sobre Wplay: por ahora no está cubierta
 
@@ -178,6 +236,48 @@ originales se mantienen:
    en cuestión (un club amateur contra uno de Bundesliga) sí pueda terminar
    en goleada. Pon `max_totals_point: null` en `config.yaml` si prefieres
    ver esas líneas de todos modos.
+5. **`value_detection.min_odds` / `max_odds` (1.40 – 3.00 por defecto)** —
+   ver la sección "Rango de cuota" justo abajo: generaliza el mismo problema
+   de `max_totals_point` a cualquier mercado, no solo `totals`.
+
+### Rango de cuota: por qué "mayor EV" no es lo mismo que "mejor pick"
+
+El motivo real detrás de `max_totals_point` (punto 4 arriba) aplica en
+general, no solo a líneas de goles: **el EV calculado es tan bueno como la
+probabilidad "justa" que lo alimenta, y esa probabilidad es menos confiable
+en resultados poco probables** — no importa si es "más de 7.5 goles" en
+totals o un underdog aplastado en h2h. Un ejemplo numérico: si el modelo
+(la cuota devigada de Bet365) dice que un resultado tiene 3% de probabilidad
+real y la casa lo ofrece a cuota 45, el EV sale en +35% — pero si la
+probabilidad real fuera 2% en vez de 3% (un error de apenas 1 punto
+porcentual, nada raro en las colas de una distribución), el EV real es
+-10%. Ordenar los candidatos `ORDER BY ev_pct DESC` sin ningún otro filtro
+selecciona sistemáticamente estos casos — son justo los que más EV
+*aparente* muestran, precisamente porque el error de estimación se
+magnifica más ahí.
+
+`value_detection.min_odds` (1.40 por defecto) y `max_odds` (3.00 por
+defecto) descartan cualquier pick con cuota ofrecida (`target_bookmakers`)
+fuera de ese rango, en cualquier mercado habilitado — antes de que llegue
+al ranking por EV. No elimina el riesgo de estimación (`min_odds`/`max_odds`
+no reemplazan a un modelo bien calibrado), pero acota el sistema a la zona
+donde un error de calibración pesa proporcionalmente menos. El rango
+1.40–3.00 es el que el propio usuario del proyecto definió como punto de
+partida razonable, no un óptimo demostrado — si el volumen diario de picks
+queda muy bajo con las ligas curadas (ver "Alcance" más arriba) puede tener
+sentido ampliarlo (ej. 1.30–5.00). Pon `min_odds: null` y/o `max_odds: null`
+en `config.yaml` para desactivar cada tope por separado.
+
+**Lo que este filtro NO resuelve**: la propuesta original también incluía
+comparar la probabilidad del modelo contra un consenso de varias casas sin
+margen — eso ahora mismo no es viable con el plan gratuito de odds-api.io,
+que permite solo 2 bookmakers propios en total (target + reference); Betplay
+y Bet365 ya ocupan ambos cupos, así que no hay margen para sumar un tercer
+libro de referencia sin pagar. El **CLV** (ver la sección de más abajo) sigue
+siendo la validación más fuerte disponible sin ese consenso: compara la
+cuota tomada contra la cuota de cierre, y con suficiente muestra (cientos de
+picks) es evidencia de si el sistema encuentra valor real o solo está
+encontrando falsos EV en las colas de la distribución.
 
 De todos modos, vale la pena revisar el log las primeras corridas después de
 activar un mercado nuevo, buscando la palabra "descarta" — si aparece muy
@@ -200,10 +300,10 @@ caso.
 La selección diaria (`select_daily_picks` en `daily.py`) siempre ordena
 **todos** los candidatos por EV% descendente y toma los 10 primeros
 (diversificando por partido cuando alcanza). Nunca hay una selección
-aleatoria en ningún punto del pipeline. Con cobertura mundial va a haber,
-cualquier día, muchos más partidos candidatos que con solo Colombia — así que
-el "top 10" es una selección real entre un universo grande, no casi todo lo
-disponible.
+aleatoria en ningún punto del pipeline. Con las ligas curadas (ver "Alcance"
+más arriba) va a haber, cualquier día, muchos más partidos candidatos que con
+solo Colombia — así que el "top 10" es una selección real entre un universo
+grande, no casi todo lo disponible.
 
 ## Cómo funciona el ciclo diario
 
@@ -217,15 +317,16 @@ Cada mañana, un solo job (`valuebet.daily_job`) hace esto en orden:
    una imagen (`output/latest_results.png`).
 2. **Si hoy es día 1 del mes**: cierra el mes anterior con un resumen aparte —
    ver la sección "Resumen mensual" más abajo.
-3. **Cuotas de hoy, mundial**: lista los partidos de fútbol de todas las
-   ligas para la ventana del día (`daily.lookahead_days`) y consulta cuotas
-   públicas de Betplay (ver `odds_provider.target_bookmakers` — Wplay no está
-   cubierta por el proveedor actual, ver "Alcance" más arriba) y de un libro
-   de referencia (por defecto Bet365 — no Pinnacle, ver "Sobre el libro de
-   referencia" más arriba) vía [odds-api.io](https://odds-api.io) (agregador
-   de solo lectura — no inicia sesión en ninguna casa). Para no gastar una consulta
-   de API por partido — con cobertura mundial puede haber cientos por día —
-   se piden en lotes de 10 (`GET /odds/multi`), acotados por
+3. **Cuotas de hoy, ligas curadas**: lista los partidos de fútbol de las
+   ligas configuradas (ver "Alcance" más arriba) para la ventana del día
+   (`daily.lookahead_days`) y consulta cuotas públicas de Betplay (ver
+   `odds_provider.target_bookmakers` — Wplay no está cubierta por el
+   proveedor actual, ver "Alcance" más arriba) y de un libro de referencia
+   (por defecto Bet365 — no Pinnacle, ver "Sobre el libro de referencia" más
+   arriba) vía [odds-api.io](https://odds-api.io) (agregador de solo lectura
+   — no inicia sesión en ninguna casa). Para no gastar una consulta de API
+   por partido — puede haber cientos por día entre todas las ligas — se
+   piden en lotes de 10 (`GET /odds/multi`), acotados por
    `daily.max_events_per_run` (400 por defecto) para no agotar tu cuota del
    plan gratuito de odds-api.io; si algún día se alcanza el tope, el log lo
    avisa explícitamente en vez de fallar en silencio.
@@ -356,6 +457,70 @@ El `@2.20` que sigue es la cuota decimal ofrecida (lo que multiplica tu stake
 si ganas — @2.20 significa que $10.000 apostados devuelven $22.000 en total
 si aciertas) y el nombre entre paréntesis es la casa (por ahora, Betplay —
 ver "Alcance") donde está esa cuota.
+
+## Señales secundarias: PlayerElo + lesiones (api-football) — EN CONSTRUCCIÓN
+
+Además del libro de referencia (Bet365), el proyecto puede consultar dos
+fuentes externas más, pero solo para los ~10 picks que YA pasaron el filtro
+de EV — nunca para los cientos de partidos candidatos de cada corrida — para
+caber en sus planes gratuitos:
+
+- **PlayerElo** (`playerelo.football`): un rating Elo por jugador (no por
+  equipo), que arma su propia probabilidad de partido a partir de la
+  alineación esperada, cubriendo 176 competiciones. La idea es usarlo como
+  **segunda opinión independiente**: comparar la probabilidad "justa" de
+  Bet365 contra la de PlayerElo antes de mostrar un pick — si coinciden, más
+  confianza; si no, se puede señalar. Esto ataca directamente el problema
+  que ya vimos con ligas menores: si la cuota de Bet365 en un partido oscuro
+  es poco confiable, un segundo modelo independiente (que no depende de
+  cuánto dinero mueve el mercado en esa liga) sirve de chequeo cruzado.
+  Plan gratuito: 500 solicitudes/mes, 10/minuto.
+- **API-Football** (`api-football.com`): datos de lesiones/bajas por
+  equipo. La idea es agregar una línea informativa al mensaje de Telegram
+  cuando haya bajas reportadas en los equipos de un pick — **sin tocar el
+  cálculo de EV**, solo como contexto extra para tu decisión manual (a
+  diferencia de un ajuste automático del pick por noticias, que se descartó
+  antes por riesgoso — ver la sección de CLV arriba). Plan gratuito: 100
+  solicitudes/día.
+
+**Por qué "en construcción" y no activado por defecto**: este proyecto ya se
+tropezó tres veces (Wplay, Pinnacle, el campo `hdp` de odds-api.io) por
+asumir la forma de una respuesta externa sin verificarla primero. Para no
+repetirlo con dos APIs nuevas a la vez, `src/valuebet/playerelo_provider.py`
+e `injuries_provider.py` solo traen la conectividad (autenticación,
+reintentos) — el parseo de campos específicos (probabilidades, nombres de
+equipo, lesiones) se escribe en una segunda entrega, después de correr los
+scripts de diagnóstico y pegarle la salida real (el JSON crudo) a Claude.
+
+**Cómo correr los scripts sin instalar nada en tu PC**: como el resto de
+este proyecto, no hace falta Python local — hay un workflow de GitHub
+Actions dedicado, `verify_secondary_signals.yml`, que solo corre manualmente
+(nunca solo, no tiene `schedule`, así que no gasta tu cuota de API sin que
+tú lo dispares):
+
+1. **Settings → Secrets and variables → Actions** en tu repo → agrega
+   `PLAYERELO_API_KEY` y `APIFOOTBALL_API_KEY` con tus keys reales (gratis,
+   ver los links de arriba).
+2. Pestaña **Actions** → "Diagnóstico PlayerElo + API-Football" → **Run
+   workflow** (mismo botón que ya usas para correr `daily.yml` a mano). Si
+   te suscribiste a API-Football vía RapidAPI en vez de directo, marca la
+   opción `via_rapidapi` antes de correrlo.
+3. Cuando termine, abre la corrida y copia todo el texto de los pasos
+   "Diagnóstico PlayerElo" y "Diagnóstico API-Football" — pégaselo a Claude.
+
+Si prefieres correrlo en tu PC en vez de Actions, también funciona
+(requiere Python 3.11+ y `pip install -r requirements.txt` primero):
+
+```
+export PLAYERELO_API_KEY="tu-key-real"
+python scripts/verify_playerelo.py
+
+export APIFOOTBALL_API_KEY="tu-key-real"
+python scripts/verify_api_football.py "Real Madrid"
+```
+
+`secondary_signals.*.enabled` queda en `false` en `config.example.yaml`
+hasta que el parseo real esté escrito.
 
 ## Despliegue 100% gratuito: GitHub Actions (no un servidor de Google Cloud)
 
@@ -534,11 +699,10 @@ cp config.example.yaml config.yaml
    sitio de marketing, que no siempre coincide — los nombres exactos que
    usan para Betplay y tu libro de referencia elegido (por defecto Bet365;
    ni Wplay ni Pinnacle están cubiertas por este proveedor — ver "Alcance" y
-   "Sobre el libro de referencia" más arriba). Confirma también que dejar
-   `leagues: []`
-   efectivamente te trae partidos de todas las ligas de fútbol (no solo las
-   principales) — este proyecto está construido contra su documentación
-   pública de agosto 2026, pero las
+   "Sobre el libro de referencia" más arriba). Confirma también que los slugs
+   de `leagues_by_sport.football` (ver "Alcance" más arriba) sigan siendo
+   válidos con `GET /leagues?sport=football&apiKey=TU_KEY` — este proyecto
+   está construido contra su documentación pública de agosto 2026, pero las
    APIs de terceros cambian. Si algo no calza, ajusta `_MARKET_NAME_MAP` en
    `src/valuebet/odds_provider.py`. Lo mismo aplica a `get_event_result`
    (usada para la liquidación automática) — confírmalo con una llamada real

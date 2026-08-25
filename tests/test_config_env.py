@@ -88,6 +88,58 @@ def test_value_detection_max_totals_point_can_be_disabled_with_null():
         assert cfg.value_detection.max_totals_point is None
 
 
+def test_secondary_signals_default_to_disabled():
+    """Sin 'secondary_signals' en el yaml, PlayerElo e injuries deben quedar
+    apagados por defecto — el parseo de sus respuestas todavía no está
+    escrito (ver playerelo_provider.py / injuries_provider.py)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg_path = Path(tmp) / "config.yaml"
+        cfg_path.write_text(CONFIG_YAML)
+
+        cfg = load_config(str(cfg_path))
+
+        assert cfg.secondary_signals.playerelo.enabled is False
+        assert cfg.secondary_signals.injuries.enabled is False
+        assert cfg.secondary_signals.injuries.via_rapidapi is False
+
+
+def test_secondary_signals_from_yaml():
+    config_with_ss = CONFIG_YAML + (
+        "secondary_signals:\n"
+        "  playerelo:\n"
+        "    enabled: true\n"
+        "    api_key: \"pe-key\"\n"
+        "  injuries:\n"
+        "    enabled: true\n"
+        "    api_key: \"af-key\"\n"
+        "    via_rapidapi: true\n"
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg_path = Path(tmp) / "config.yaml"
+        cfg_path.write_text(config_with_ss)
+
+        cfg = load_config(str(cfg_path))
+
+        assert cfg.secondary_signals.playerelo.enabled is True
+        assert cfg.secondary_signals.playerelo.api_key == "pe-key"
+        assert cfg.secondary_signals.injuries.enabled is True
+        assert cfg.secondary_signals.injuries.api_key == "af-key"
+        assert cfg.secondary_signals.injuries.via_rapidapi is True
+
+
+def test_secondary_signals_env_vars_override_yaml(monkeypatch):
+    monkeypatch.setenv("PLAYERELO_API_KEY", "env-pe-key")
+    monkeypatch.setenv("APIFOOTBALL_API_KEY", "env-af-key")
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg_path = Path(tmp) / "config.yaml"
+        cfg_path.write_text(CONFIG_YAML)
+
+        cfg = load_config(str(cfg_path))
+
+        assert cfg.secondary_signals.playerelo.api_key == "env-pe-key"
+        assert cfg.secondary_signals.injuries.api_key == "env-af-key"
+
+
 def test_value_detection_max_totals_point_custom_value_from_yaml():
     config_with_vd = CONFIG_YAML + (
         "value_detection:\n"
@@ -100,6 +152,52 @@ def test_value_detection_max_totals_point_custom_value_from_yaml():
         cfg = load_config(str(cfg_path))
 
         assert cfg.value_detection.max_totals_point == 6.5
+
+
+def test_value_detection_odds_range_defaults():
+    """Sin 'min_odds'/'max_odds' explícitos en el yaml, deben quedar en el
+    rango conservador por defecto (1.40-3.00) — ver ValueDetectionConfig."""
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg_path = Path(tmp) / "config.yaml"
+        cfg_path.write_text(CONFIG_YAML)
+
+        cfg = load_config(str(cfg_path))
+
+        assert cfg.value_detection.min_odds == 1.40
+        assert cfg.value_detection.max_odds == 3.00
+
+
+def test_value_detection_odds_range_custom_value_from_yaml():
+    config_with_vd = CONFIG_YAML + (
+        "value_detection:\n"
+        "  min_odds: 1.30\n"
+        "  max_odds: 5.00\n"
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg_path = Path(tmp) / "config.yaml"
+        cfg_path.write_text(config_with_vd)
+
+        cfg = load_config(str(cfg_path))
+
+        assert cfg.value_detection.min_odds == 1.30
+        assert cfg.value_detection.max_odds == 5.00
+
+
+def test_value_detection_odds_range_can_be_disabled_with_null():
+    """`null` desactiva cada tope por separado, igual que max_totals_point."""
+    config_with_vd = CONFIG_YAML + (
+        "value_detection:\n"
+        "  min_odds: null\n"
+        "  max_odds: null\n"
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg_path = Path(tmp) / "config.yaml"
+        cfg_path.write_text(config_with_vd)
+
+        cfg = load_config(str(cfg_path))
+
+        assert cfg.value_detection.min_odds is None
+        assert cfg.value_detection.max_odds is None
 
 
 def test_without_env_vars_uses_yaml_placeholders(monkeypatch):
@@ -184,6 +282,45 @@ def test_leagues_for_sport_per_sport_override_does_not_affect_other_sports():
     cfg = _op_cfg(leagues=[], leagues_by_sport={"basketball": ["usa-nba"]})
     assert leagues_for_sport(cfg, "football") is None  # sigue siendo "todas"
     assert leagues_for_sport(cfg, "basketball") == ["usa-nba"]
+
+
+def test_example_config_football_leagues_filter():
+    """config.example.yaml debe traer el filtro curado de ligas de fútbol
+    (Colombia, Argentina, Brasil, MLS, México, Big 5 europeas, torneos UEFA y
+    CONMEBOL) — todos los slugs verificados contra una respuesta real de
+    GET /leagues?sport=football (ago. 2026), nunca adivinados. Este test es
+    una red de seguridad ante typos/borrados accidentales al editar el yaml,
+    no una verificación contra la API en vivo (los slugs pueden cambiar con
+    el tiempo — ver el README, sección "Alcance", advertencias ⚠️)."""
+    example_path = Path(__file__).resolve().parents[1] / "config.example.yaml"
+    cfg = load_config(str(example_path))
+
+    football_leagues = leagues_for_sport(cfg.odds_provider, "football")
+    assert football_leagues is not None
+    assert set(football_leagues) == {
+        "colombia-liga-dimayor-finalizacion",
+        "argentina-primera-lpf-clausura",
+        "brazil-brasileiro-serie-a",
+        "usa-mls",
+        "mexico-liga-mx-apertura",
+        "england-premier-league",
+        "spain-laliga",
+        "italy-serie-a",
+        "germany-bundesliga",
+        "france-ligue-1",
+        "international-clubs-uefa-champions-league-playoff-round",
+        "international-clubs-uefa-europa-league-playoff-round",
+        "international-clubs-uefa-conference-league-playoff-round",
+        "international-clubs-conmebol-libertadores-knockout-stage",
+        "international-clubs-conmebol-sudamericana-knockout-stage",
+    }
+    # La Primera B colombiana ("Torneo DIMAYOR") NO debe colarse — solo la
+    # Primera A ("Liga DIMAYOR"), y USL Championship tampoco (solo MLS).
+    assert "colombia-torneo-dimayor-clausura" not in football_leagues
+    assert "usa-usl-championship" not in football_leagues
+
+    # basketball no debe verse afectado por el cambio de fútbol.
+    assert leagues_for_sport(cfg.odds_provider, "basketball") == ["usa-nba"]
 
 
 def test_leagues_by_sport_parsed_from_yaml():

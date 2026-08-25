@@ -297,3 +297,118 @@ def test_max_totals_point_allows_normal_lines():
         max_totals_point=5.5,
     )
     assert any(vb.selection == "over_2.5" for vb in results)
+
+
+def test_max_odds_rejects_extreme_underdog():
+    """Mismo problema de fondo que max_totals_point pero para cualquier
+    mercado: un resultado poco probable (underdog aplastado en h2h) es más
+    difícil de calibrar bien — un error chico en la probabilidad estimada se
+    magnifica mucho más en una cuota alta que cerca de evens."""
+    pinnacle_market = BookmakerMarket(
+        bookmaker="Pinnacle",
+        market_key="h2h",
+        updated_at=datetime.utcnow(),
+        outcomes=[Outcome("home", 1.12), Outcome("draw", 8.50), Outcome("away", 15.00)],
+    )
+    betplay_market = BookmakerMarket(
+        bookmaker="Betplay",
+        market_key="h2h",
+        updated_at=datetime.utcnow(),
+        outcomes=[Outcome("home", 1.15), Outcome("draw", 8.00), Outcome("away", 20.00)],
+    )
+    event = Event(
+        event_id="evt4",
+        sport="football",
+        league="Primera A",
+        home_team="Fuerte",
+        away_team="Débil",
+        commence_time=datetime.utcnow() + timedelta(days=1),
+        bookmakers={"Pinnacle": [pinnacle_market], "Betplay": [betplay_market]},
+    )
+
+    results_no_cap = find_value_bets_in_event(
+        event,
+        target_bookmakers=["Betplay"],
+        reference_bookmakers=["Pinnacle"],
+        devig_method="multiplicative",
+        min_ev_pct=1.0,
+        min_reference_books=1,
+    )
+    # Confirma que el fixture sí produce un pick real (EV positivo) sin el tope.
+    assert any(vb.selection == "away" for vb in results_no_cap)
+
+    results_capped = find_value_bets_in_event(
+        event,
+        target_bookmakers=["Betplay"],
+        reference_bookmakers=["Pinnacle"],
+        devig_method="multiplicative",
+        min_ev_pct=1.0,
+        min_reference_books=1,
+        max_odds=3.00,
+    )
+    assert all(vb.selection != "away" for vb in results_capped)
+
+
+def test_min_odds_rejects_extreme_favorite():
+    """Mismo mecanismo que max_odds pero en el otro extremo: una cuota muy
+    baja (favorito aplastante) casi nunca tiene EV real, y si lo tiene, un
+    error chico en la probabilidad estimada es carísimo en proporción."""
+    pinnacle_market = BookmakerMarket(
+        bookmaker="Pinnacle",
+        market_key="h2h",
+        updated_at=datetime.utcnow(),
+        outcomes=[Outcome("home", 1.15), Outcome("draw", 7.00), Outcome("away", 13.00)],
+    )
+    betplay_market = BookmakerMarket(
+        bookmaker="Betplay",
+        market_key="h2h",
+        updated_at=datetime.utcnow(),
+        outcomes=[Outcome("home", 1.30), Outcome("draw", 6.50), Outcome("away", 11.00)],
+    )
+    event = Event(
+        event_id="evt5",
+        sport="football",
+        league="Primera A",
+        home_team="Fuerte",
+        away_team="Débil",
+        commence_time=datetime.utcnow() + timedelta(days=1),
+        bookmakers={"Pinnacle": [pinnacle_market], "Betplay": [betplay_market]},
+    )
+
+    results_no_floor = find_value_bets_in_event(
+        event,
+        target_bookmakers=["Betplay"],
+        reference_bookmakers=["Pinnacle"],
+        devig_method="multiplicative",
+        min_ev_pct=1.0,
+        min_reference_books=1,
+    )
+    assert any(vb.selection == "home" for vb in results_no_floor)
+
+    results_floored = find_value_bets_in_event(
+        event,
+        target_bookmakers=["Betplay"],
+        reference_bookmakers=["Pinnacle"],
+        devig_method="multiplicative",
+        min_ev_pct=1.0,
+        min_reference_books=1,
+        min_odds=1.40,
+    )
+    assert all(vb.selection != "home" for vb in results_floored)
+
+
+def test_odds_range_allows_picks_within_range():
+    """Un pick con cuota dentro del rango configurado no debe verse afectado."""
+    event = make_event()
+    results = find_value_bets_in_event(
+        event,
+        target_bookmakers=["Betplay"],
+        reference_bookmakers=["Pinnacle"],
+        devig_method="multiplicative",
+        min_ev_pct=1.0,
+        min_reference_books=1,
+        min_odds=1.40,
+        max_odds=3.00,
+    )
+    # 'home' se ofrece a 2.20 en Betplay — dentro de 1.40-3.00.
+    assert any(vb.selection == "home" for vb in results)

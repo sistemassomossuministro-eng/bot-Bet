@@ -81,6 +81,48 @@ class ValueDetectionConfig:
     # su cuota ahí es una base menos confiable para estimar la probabilidad
     # "justa". None desactiva el tope. Ver value_finder.py y el README.
     max_totals_point: Optional[float] = 5.5
+    # Filtro general de rango de CUOTA ofrecida (target_bookmakers), aplica a
+    # TODOS los mercados habilitados (h2h, totals, btts...), no solo totals.
+    # Mismo problema de fondo que max_totals_point pero más amplio: un
+    # resultado poco probable (un underdog aplastado en h2h, no solo una
+    # línea de goles extrema en totals) es más difícil de calibrar bien —
+    # un error chico en la probabilidad estimada se magnifica mucho más en
+    # una cuota alta que en una cercana a evens. None desactiva cada tope
+    # por separado. Ver value_finder.py y el README ("Rango de cuota").
+    min_odds: Optional[float] = 1.40
+    max_odds: Optional[float] = 3.00
+
+
+@dataclass
+class PlayerEloConfig:
+    # Segunda opinión independiente (ver playerelo_provider.py): compara la
+    # probabilidad "justa" del libro de referencia contra la de PlayerElo
+    # para los picks que YA pasaron el filtro de EV. enabled=False por
+    # defecto — el parseo de la respuesta real todavía no está escrito (ver
+    # el aviso grande en playerelo_provider.py), así que activarlo hoy no
+    # haría nada útil. Se activa en una segunda entrega, después de correr
+    # scripts/verify_playerelo.py con una key real.
+    enabled: bool = False
+    api_key: str = ""
+    base_url: str = "https://data-api.playerelo.football"
+
+
+@dataclass
+class InjuriesConfig:
+    # Nota informativa de bajas/lesiones (ver injuries_provider.py) para los
+    # picks que YA pasaron el filtro de EV — NUNCA ajusta el cálculo de EV,
+    # solo agrega contexto al mensaje de Telegram. enabled=False por
+    # defecto, mismo motivo que PlayerEloConfig.
+    enabled: bool = False
+    api_key: str = ""
+    base_url: str = "https://v3.football.api-sports.io"
+    via_rapidapi: bool = False  # True si te suscribiste desde RapidAPI en vez de api-football.com directo
+
+
+@dataclass
+class SecondarySignalsConfig:
+    playerelo: PlayerEloConfig = field(default_factory=PlayerEloConfig)
+    injuries: InjuriesConfig = field(default_factory=InjuriesConfig)
 
 
 @dataclass
@@ -124,6 +166,7 @@ class AppConfig:
     # Con default para no romper construcciones existentes de AppConfig(...)
     # (tests, código de terceros) que no pasen este argumento explícitamente.
     instagram: Optional[InstagramConfig] = None
+    secondary_signals: SecondarySignalsConfig = field(default_factory=SecondarySignalsConfig)
 
 
 def load_config(path: str = "config.yaml") -> AppConfig:
@@ -172,6 +215,16 @@ def load_config(path: str = "config.yaml") -> AppConfig:
             float(vd_raw["max_totals_point"])
             if vd_raw.get("max_totals_point") is not None
             else (None if "max_totals_point" in vd_raw else 5.5)
+        ),
+        min_odds=(
+            float(vd_raw["min_odds"])
+            if vd_raw.get("min_odds") is not None
+            else (None if "min_odds" in vd_raw else 1.40)
+        ),
+        max_odds=(
+            float(vd_raw["max_odds"])
+            if vd_raw.get("max_odds") is not None
+            else (None if "max_odds" in vd_raw else 3.00)
         ),
     )
 
@@ -222,6 +275,24 @@ def load_config(path: str = "config.yaml") -> AppConfig:
     storage_raw = raw.get("storage", {})
     logging_raw = raw.get("logging", {})
 
+    ss_raw = raw.get("secondary_signals", {})
+    pe_raw = ss_raw.get("playerelo", {})
+    playerelo_api_key = os.environ.get("PLAYERELO_API_KEY") or pe_raw.get("api_key", "")
+    playerelo = PlayerEloConfig(
+        enabled=bool(pe_raw.get("enabled", False)),
+        api_key=playerelo_api_key,
+        base_url=pe_raw.get("base_url", "https://data-api.playerelo.football"),
+    )
+    inj_raw = ss_raw.get("injuries", {})
+    injuries_api_key = os.environ.get("APIFOOTBALL_API_KEY") or inj_raw.get("api_key", "")
+    injuries = InjuriesConfig(
+        enabled=bool(inj_raw.get("enabled", False)),
+        api_key=injuries_api_key,
+        base_url=inj_raw.get("base_url", "https://v3.football.api-sports.io"),
+        via_rapidapi=bool(inj_raw.get("via_rapidapi", False)),
+    )
+    secondary_signals = SecondarySignalsConfig(playerelo=playerelo, injuries=injuries)
+
     return AppConfig(
         bankroll=bankroll,
         odds_provider=odds_provider,
@@ -229,6 +300,7 @@ def load_config(path: str = "config.yaml") -> AppConfig:
         daily=daily,
         telegram=telegram,
         instagram=instagram,
+        secondary_signals=secondary_signals,
         db_path=storage_raw.get("db_path", "data/valuebet.db"),
         output_dir=storage_raw.get("output_dir", "output"),
         log_level=logging_raw.get("level", "INFO"),

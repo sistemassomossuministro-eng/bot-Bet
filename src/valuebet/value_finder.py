@@ -40,6 +40,8 @@ def find_value_bets_in_event(
     allowed_markets: Optional[List[str]] = None,
     max_ev_pct: Optional[float] = None,
     max_totals_point: Optional[float] = None,
+    min_odds: Optional[float] = None,
+    max_odds: Optional[float] = None,
 ) -> List[ValueBet]:
     results: List[ValueBet] = []
 
@@ -80,6 +82,29 @@ def find_value_bets_in_event(
                             event.label(),
                         )
                         continue
+
+                if min_odds is not None and outcome.price_decimal < min_odds:
+                    # Cuota muy baja: casi nunca hay EV real ahí, y si lo hay
+                    # el margen de error es carísimo (ver ValueDetectionConfig.min_odds).
+                    continue
+
+                if max_odds is not None and outcome.price_decimal > max_odds:
+                    # Resultado poco probable: un error chico en la probabilidad
+                    # "justa" estimada se magnifica mucho más en una cuota alta
+                    # que en una cercana a evens — el mismo problema de fondo
+                    # que max_totals_point, pero para cualquier mercado, no solo
+                    # totals (ver ValueDetectionConfig.max_odds y el README,
+                    # "Rango de cuota").
+                    logger.info(
+                        "Cuota descartada por estar fuera del rango configurado (%.2f > tope %.2f): %s · %s · %s (%s)",
+                        outcome.price_decimal,
+                        max_odds,
+                        event.label(),
+                        market_key,
+                        outcome.name,
+                        target_bk,
+                    )
+                    continue
 
                 ref_prices = _reference_prices(event, reference_bookmakers, market_key, outcome.name)
                 if not ref_prices:
@@ -178,6 +203,8 @@ def find_value_bets(
     allowed_markets: Optional[List[str]] = None,
     max_ev_pct: Optional[float] = None,
     max_totals_point: Optional[float] = None,
+    min_odds: Optional[float] = None,
+    max_odds: Optional[float] = None,
 ) -> List[ValueBet]:
     all_results: List[ValueBet] = []
     for event in events:
@@ -195,6 +222,8 @@ def find_value_bets(
                 allowed_markets,
                 max_ev_pct,
                 max_totals_point,
+                min_odds,
+                max_odds,
             )
         )
     all_results.sort(key=lambda vb: vb.ev_pct, reverse=True)
