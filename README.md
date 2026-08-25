@@ -483,6 +483,18 @@ caber en sus planes gratuitos:
   antes por riesgoso — ver la sección de CLV arriba). Plan gratuito: 100
   solicitudes/día.
 
+  **⚠️ Riesgo real encontrado en el primer diagnóstico (2026-08-25)**: `GET
+  /injuries?team=<id>&season=2026` respondió `errors.plan`: "Free plans do
+  not have access to this season, try from 2022 to 2024." — el plan
+  gratuito **no cubre la temporada en curso** para `/injuries`, que es
+  justo lo que esta señal necesitaría (bajas antes del partido de HOY). Se
+  está probando si `/injuries?fixture=<id>` (por partido específico) o
+  `/injuries?date=<hoy>` esquivan la restricción — ver
+  `scripts/verify_api_football.py`. Si ninguna funciona, esta señal
+  concreta (lesiones) no es viable en el plan gratuito y quedaría
+  descartada o pendiente de una futura suscripción de pago, sin afectar a
+  PlayerElo (señal independiente, sin este problema).
+
 **Por qué "en construcción" y no activado por defecto**: este proyecto ya se
 tropezó tres veces (Wplay, Pinnacle, el campo `hdp` de odds-api.io) por
 asumir la forma de una respuesta externa sin verificarla primero. Para no
