@@ -1,29 +1,48 @@
 """Cliente HTTP para API-Football (api-football.com / api-sports.io).
 
-IMPORTANTE — ESTADO ACTUAL: SOLO CONECTIVIDAD, TODAVÍA NO HAY PARSEO.
-
-Misma precaución que playerelo_provider.py: no se escribe parseo de campos
-específicos (lesiones, IDs de equipo, etc.) hasta correr
-`scripts/verify_api_football.py` con una API key real y confirmar la forma
-exacta de la respuesta — este proyecto ya aprendió esa lección por las malas
-con odds-api.io (ver odds_provider.py).
-
 Auth: header `x-apisports-key: <api_key>` (si usas la key directa de
 api-football.com) — si en cambio te suscribiste vía RapidAPI, la auth es
 distinta (`x-rapidapi-key` + `x-rapidapi-host`); ver
 `secondary_signals.injuries.via_rapidapi` en config.yaml. Plan gratuito de
-api-football.com: 100 solicitudes/día — por eso este proyecto solo la
-consultaría para los equipos de los picks que YA pasaron el filtro de EV
-(~10 picks/día = máx. 20 equipos), nunca para los cientos de partidos
-candidatos evaluados cada corrida.
+api-football.com: 100 solicitudes/día.
+
+FORMA REAL CONFIRMADA (2026-08-25, con `scripts/verify_api_football.py`
+contra la API real):
+
+- `GET /teams?search=<nombre>` -> `response[].team{id, name, code, country,
+  founded, national, logo}` + `venue{...}`. Un mismo club puede traer varios
+  resultados (filiales, femenino, sub-19/20) — hay que elegir el que
+  coincida por nombre exacto (ver `pick_main_team_id`).
+
+- `GET /injuries?team=<id>&season=<YYYY>` -> ⚠️ **BLOQUEADO en el plan
+  gratuito para la temporada EN CURSO** — confirmado con una llamada real:
+  `season=2026` devolvió `errors.plan`: "Free plans do not have access to
+  this season, try from 2022 to 2024." Por eso este proyecto NO usa
+  `team`+`season` para lesiones de hoy.
+
+- `GET /injuries?date=YYYY-MM-DD` -> ✅ SÍ funciona para la temporada en
+  curso (confirmado: `date=2026-08-25` trajo 72 resultados de partidos de
+  hoy, incluyendo Champions League). Este es el único filtro que este
+  proyecto usa — trae TODAS las lesiones reportadas para partidos de ese
+  día (de cualquier liga), y se filtra por equipo del lado del cliente (ver
+  `injuries_for_team`). Cada item: `player{id, name, photo, type, reason}`,
+  `team{id, name, logo}`, `fixture{id, timezone, date, timestamp}`,
+  `league{id, season, name, country, logo, flag}`.
+
+- `GET /fixtures?team=<id>&next=<n>` -> ⚠️ **BLOQUEADO en el plan gratuito**
+  ("Free plans do not have access to the Next parameter") — no usar. No
+  hace falta de todos modos: `/injuries?date=` ya trae su propio
+  `fixture.id` por entrada.
 """
 from __future__ import annotations
 
 import logging
 import time
-from typing import Optional
+from typing import List, Optional
 
 import requests
+
+from .team_match import names_match
 
 logger = logging.getLogger(__name__)
 
@@ -86,3 +105,37 @@ class ApiFootballProvider:
                     break
                 time.sleep(min(2 ** attempt, 20))
         raise RuntimeError(f"No se pudo consultar {url} tras {self.max_retries} intentos") from last_exc
+
+    def get_injuries_for_date(self, date_str: str) -> List[dict]:
+        """Todas las lesiones reportadas para partidos de un día (YYYY-MM-DD).
+
+        Deliberadamente por FECHA y no por team+season — season está
+        bloqueado en el plan gratuito para la temporada en curso (ver el
+        aviso grande al inicio del archivo), pero date sí funciona y además
+        es más barato en cuota: una sola llamada cubre todos los partidos
+        de ese día, no una por equipo."""
+        data = self.raw_get("/injuries", {"date": date_str})
+        if isinstance(data, dict) and isinstance(data.get("errors"), dict) and data["errors"]:
+            logger.warning("API-Football: /injuries?date=%s devolvió un error de plan: %s", date_str, data["errors"])
+            return []
+        if isinstance(data, dict):
+            return data.get("response", []) or []
+        return []
+
+    @staticmethod
+    def injuries_for_team(injuries: List[dict], team_name: str) -> List[str]:
+        """Filtra la lista de un día a las lesiones de UN equipo (por nombre,
+        ver team_match.names_match — emparejamiento ESTRICTO a propósito) y
+        las devuelve como notas legibles, ej. 'D. Alaba (Knee Injury)'."""
+        notes: List[str] = []
+        for item in injuries:
+            team_name_in_item = (item.get("team") or {}).get("name")
+            if not names_match(team_name_in_item, team_name):
+                continue
+            player = item.get("player") or {}
+            name = player.get("name")
+            if not name:
+                continue
+            reason = player.get("reason") or player.get("type") or "sin detalle"
+            notes.append(f"{name} ({reason})")
+        return notes

@@ -110,11 +110,21 @@ class TelegramAlerter:
             # URL verificada (odds_provider.bookmaker_links) — nunca se adivina
             # ni se genera automáticamente, ver la nota de seguridad en el README.
             casa = f'<a href="{link}">{vb.bookmaker}</a>' if link else vb.bookmaker
-            lines.append(
-                f"{i}. <b>{vb.event.label()}</b>\n"
-                f"   {vb.description()} @ {vb.offered_odds:.2f} ({casa})\n"
-                f"   EV: <b>+{vb.ev_pct:.1f}%</b>"
-            )
+            pick_lines = [
+                f"{i}. <b>{vb.event.label()}</b>",
+                f"   {vb.description()} @ {vb.offered_odds:.2f} ({casa})",
+                f"   EV: <b>+{vb.ev_pct:.1f}%</b>",
+            ]
+            # Señales secundarias (ver secondary_signals.py) — puramente
+            # informativas, no afectan el EV de arriba. Solo aparecen si
+            # están activadas Y se pudo emparejar el partido/equipo por
+            # nombre contra PlayerElo/API-Football (ver team_match.py).
+            if vb.playerelo_note:
+                pick_lines.append(f"   🔎 {vb.playerelo_note}")
+            if vb.injury_notes:
+                for note in vb.injury_notes:
+                    pick_lines.append(f"   🩹 {note}")
+            lines.append("\n".join(pick_lines))
         lines.append(
             "\nAnálisis estadístico automatizado — no coloca apuestas por ti. "
             "Verifica la cuota vigente antes de decidir. Juega con responsabilidad."

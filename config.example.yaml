@@ -191,28 +191,38 @@ secondary_signals:
   # para los ~10 picks que YA pasaron el filtro de EV (nunca para los
   # cientos de partidos candidatos evaluados cada corrida), para caber en
   # sus planes gratuitos. NINGUNA de las dos ajusta el cálculo de EV — son
-  # puramente informativas/de contexto. Ver el README, "Señales secundarias".
+  # puramente informativas/de contexto, se agregan como líneas extra debajo
+  # de cada pick en el mensaje de Telegram. Ver el README, "Señales
+  # secundarias", para el detalle completo (incluyendo dos limitaciones
+  # reales del plan gratuito de API-Football encontradas y esquivadas).
   #
-  # ESTADO ACTUAL: enabled=False en ambas a propósito. La conectividad (auth,
-  # reintentos) ya está lista, pero el parseo de la respuesta real todavía
-  # NO está escrito — este proyecto ya aprendió (con odds-api.io: Wplay,
-  # Pinnacle, el campo 'hdp') a no adivinar la forma de una API externa.
-  # Antes de activar esto: corre `scripts/verify_playerelo.py` y
-  # `scripts/verify_api_football.py` con tus keys reales y pégale la salida
-  # a Claude para que escriba el parseo definitivo.
+  # Activadas (2026-08-25) tras verificar el parseo contra respuestas reales
+  # de ambas APIs (`scripts/verify_playerelo.py` / `verify_api_football.py`)
+  # — misma disciplina que con odds-api.io (Wplay, Pinnacle, el campo
+  # 'hdp'): nunca se adivinó la forma de la respuesta.
+  #
+  # El emparejamiento de equipos/partidos con odds-api.io es por NOMBRE (sin
+  # ID compartido) y es ESTRICTO a propósito (ver src/valuebet/team_match.py)
+  # — vas a ver picks sin ninguna señal secundaria mientras el matching no
+  # cubra todas las variantes de nombre reales; es preferible a mostrar el
+  # dato de un equipo/partido equivocado.
   playerelo:
     # Segunda opinión independiente (playerelo.football): compara la
     # probabilidad "justa" del libro de referencia contra la de PlayerElo
-    # (rating Elo por jugador, no por equipo) para cada pick. Gratis:
-    # 500 solicitudes/mes, 10/minuto — ver https://playerelo.football/api-access
-    enabled: false
+    # (rating Elo por jugador, no por equipo) para cada pick de mercado h2h
+    # (no aplica a totals/btts en esta fase). Gratis: 500 solicitudes/mes,
+    # 10/minuto — ver https://playerelo.football/api-access
+    enabled: true
     api_key: "TU_PLAYERELO_API_KEY_AQUI"   # o el secreto PLAYERELO_API_KEY
     base_url: "https://data-api.playerelo.football"
   injuries:
     # Nota informativa de bajas/lesiones (api-football.com) junto a cada
     # pick del mensaje de Telegram. Gratis: 100 solicitudes/día — ver
-    # https://www.api-football.com/pricing
-    enabled: false
+    # https://www.api-football.com/pricing. Se consulta por FECHA
+    # (`/injuries?date=`), no por equipo+temporada — el plan gratuito
+    # bloquea la temporada en curso para team+season (confirmado con una
+    # llamada real), pero SÍ permite consultar por fecha.
+    enabled: true
     api_key: "TU_APIFOOTBALL_API_KEY_AQUI"  # o el secreto APIFOOTBALL_API_KEY
     base_url: "https://v3.football.api-sports.io"
     via_rapidapi: false   # true si te suscribiste desde RapidAPI en vez de api-football.com directo

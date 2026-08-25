@@ -14,6 +14,7 @@ from typing import List, Optional
 from .config import AppConfig, leagues_for_sport
 from .models import Event, ValueBet
 from .odds_provider import OddsProvider
+from .secondary_signals import enrich_picks_with_secondary_signals
 from .settlement import settle_selection
 from .storage.db import Storage
 from .value_finder import find_value_bets
@@ -58,6 +59,50 @@ def select_daily_picks(
         picks.append(vb)
 
     return picks[:num_picks]
+
+
+def _enrich_picks_with_secondary_signals_safely(cfg: AppConfig, picks: List[ValueBet]) -> None:
+    """Construye los providers de PlayerElo/API-Football (si están activados
+    y con api_key real) y enriquece `picks` en el lugar. Cualquier fallo acá
+    — key faltante, API caída, lo que sea — se registra y se sigue sin la
+    señal, nunca tumba el resumen diario (ver secondary_signals.py)."""
+    if not picks:
+        return
+
+    playerelo_provider = None
+    if cfg.secondary_signals.playerelo.enabled:
+        try:
+            from .playerelo_provider import PlayerEloProvider
+
+            playerelo_provider = PlayerEloProvider(
+                api_key=cfg.secondary_signals.playerelo.api_key,
+                base_url=cfg.secondary_signals.playerelo.base_url,
+            )
+        except ValueError as exc:
+            logger.warning("secondary_signals.playerelo.enabled=true pero no se pudo inicializar (%s) — se omite.", exc)
+
+    injuries_provider = None
+    if cfg.secondary_signals.injuries.enabled:
+        try:
+            from .injuries_provider import ApiFootballProvider
+
+            injuries_provider = ApiFootballProvider(
+                api_key=cfg.secondary_signals.injuries.api_key,
+                base_url=cfg.secondary_signals.injuries.base_url,
+                via_rapidapi=cfg.secondary_signals.injuries.via_rapidapi,
+            )
+        except ValueError as exc:
+            logger.warning("secondary_signals.injuries.enabled=true pero no se pudo inicializar (%s) — se omite.", exc)
+
+    if playerelo_provider is None and injuries_provider is None:
+        return
+
+    try:
+        enrich_picks_with_secondary_signals(
+            picks, cfg, playerelo_provider=playerelo_provider, injuries_provider=injuries_provider
+        )
+    except Exception:
+        logger.exception("Fallo enriqueciendo picks con señales secundarias — se sigue sin ellas.")
 
 
 def generate_daily_picks(
@@ -123,6 +168,8 @@ def generate_daily_picks(
     )
 
     picks = select_daily_picks(candidates, cfg.daily.num_picks, cfg.daily.max_picks_per_event)
+
+    _enrich_picks_with_secondary_signals_safely(cfg, picks)
 
     for vb in picks:
         storage.add_daily_pick(pick_date_str, vb)

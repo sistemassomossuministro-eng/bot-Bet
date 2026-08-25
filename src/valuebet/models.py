@@ -66,6 +66,12 @@ class ValueBet:
     reference_bookmakers: List[str]
     suggested_stake: Optional[float] = None
     kelly_fraction_used: Optional[float] = None
+    # Señales secundarias (ver secondary_signals.py) — puramente informativas,
+    # NUNCA alimentan el cálculo de EV/fair_probability de arriba. None si la
+    # señal está desactivada, si el partido no pudo emparejarse por nombre
+    # contra el proveedor externo (ver team_match.py), o si no hay dato.
+    playerelo_note: Optional[str] = None
+    injury_notes: Optional[List[str]] = None
 
     def description(self) -> str:
         """Texto legible de qué se está apostando, ej. 'Gana Millonarios (Local)'

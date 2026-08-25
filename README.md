@@ -458,57 +458,72 @@ si ganas — @2.20 significa que $10.000 apostados devuelven $22.000 en total
 si aciertas) y el nombre entre paréntesis es la casa (por ahora, Betplay —
 ver "Alcance") donde está esa cuota.
 
-## Señales secundarias: PlayerElo + lesiones (api-football) — EN CONSTRUCCIÓN
+## Señales secundarias: PlayerElo + lesiones (api-football)
 
-Además del libro de referencia (Bet365), el proyecto puede consultar dos
-fuentes externas más, pero solo para los ~10 picks que YA pasaron el filtro
-de EV — nunca para los cientos de partidos candidatos de cada corrida — para
-caber en sus planes gratuitos:
+Además del libro de referencia (Bet365), el proyecto consulta dos fuentes
+externas más — pero solo para los ~10 picks que YA pasaron el filtro de EV,
+nunca para los cientos de partidos candidatos de cada corrida — para caber
+en sus planes gratuitos. Son **puramente informativas**: aparecen como
+líneas extra debajo de cada pick en el mensaje de Telegram, pero **nunca
+tocan el cálculo de EV/probabilidad justa** (que sigue basándose solo en el
+libro de referencia, ver "Sobre el libro de referencia" más arriba).
 
 - **PlayerElo** (`playerelo.football`): un rating Elo por jugador (no por
   equipo), que arma su propia probabilidad de partido a partir de la
-  alineación esperada, cubriendo 176 competiciones. La idea es usarlo como
-  **segunda opinión independiente**: comparar la probabilidad "justa" de
-  Bet365 contra la de PlayerElo antes de mostrar un pick — si coinciden, más
-  confianza; si no, se puede señalar. Esto ataca directamente el problema
-  que ya vimos con ligas menores: si la cuota de Bet365 en un partido oscuro
-  es poco confiable, un segundo modelo independiente (que no depende de
-  cuánto dinero mueve el mercado en esa liga) sirve de chequeo cruzado.
-  Plan gratuito: 500 solicitudes/mes, 10/minuto.
-- **API-Football** (`api-football.com`): datos de lesiones/bajas por
-  equipo. La idea es agregar una línea informativa al mensaje de Telegram
-  cuando haya bajas reportadas en los equipos de un pick — **sin tocar el
-  cálculo de EV**, solo como contexto extra para tu decisión manual (a
-  diferencia de un ajuste automático del pick por noticias, que se descartó
-  antes por riesgoso — ver la sección de CLV arriba). Plan gratuito: 100
-  solicitudes/día.
+  alineación esperada. Se usa como **segunda opinión independiente**: para
+  picks de mercado `h2h` (1X2), compara la probabilidad "justa" de Bet365
+  contra la de PlayerElo para esa misma selección — ataca el problema visto
+  con ligas menores (cuota de Bet365 poco confiable en partidos oscuros; un
+  segundo modelo independiente, que no depende de cuánto dinero mueve el
+  mercado en esa liga, sirve de chequeo cruzado). Plan gratuito: 500
+  solicitudes/mes, 10/minuto.
+- **API-Football** (`api-football.com`): nota informativa de bajas/lesiones
+  por equipo, sin tocar el cálculo de EV (a diferencia de un ajuste
+  automático del pick por noticias, que se descartó antes por riesgoso —
+  ver la sección de CLV arriba). Plan gratuito: 100 solicitudes/día.
 
-  **⚠️ Riesgo real encontrado en el primer diagnóstico (2026-08-25)**: `GET
-  /injuries?team=<id>&season=2026` respondió `errors.plan`: "Free plans do
-  not have access to this season, try from 2022 to 2024." — el plan
-  gratuito **no cubre la temporada en curso** para `/injuries`, que es
-  justo lo que esta señal necesitaría (bajas antes del partido de HOY). Se
-  está probando si `/injuries?fixture=<id>` (por partido específico) o
-  `/injuries?date=<hoy>` esquivan la restricción — ver
-  `scripts/verify_api_football.py`. Si ninguna funciona, esta señal
-  concreta (lesiones) no es viable en el plan gratuito y quedaría
-  descartada o pendiente de una futura suscripción de pago, sin afectar a
-  PlayerElo (señal independiente, sin este problema).
+**Cómo se consulta cada una (confirmado contra respuestas reales, ago-2026,
+nunca adivinado — misma disciplina que evitó repetir los bugs de Wplay,
+Pinnacle y el campo `hdp` de odds-api.io)**:
 
-**Por qué "en construcción" y no activado por defecto**: este proyecto ya se
-tropezó tres veces (Wplay, Pinnacle, el campo `hdp` de odds-api.io) por
-asumir la forma de una respuesta externa sin verificarla primero. Para no
-repetirlo con dos APIs nuevas a la vez, `src/valuebet/playerelo_provider.py`
-e `injuries_provider.py` solo traen la conectividad (autenticación,
-reintentos) — el parseo de campos específicos (probabilidades, nombres de
-equipo, lesiones) se escribe en una segunda entrega, después de correr los
-scripts de diagnóstico y pegarle la salida real (el JSON crudo) a Claude.
+- PlayerElo: `GET /v1/predictions?date=<fecha del partido>` trae TODOS los
+  partidos de ese día (el único filtro real es `date` — `home`/`away` no
+  filtran nada, se probó). El proyecto busca ahí el partido por nombre de
+  equipo. `home_team_elo`/`p_home`/etc. pueden venir `null` si PlayerElo no
+  tiene rating para esos jugadores — en ese caso no hay señal para ese pick.
+- API-Football: `GET /injuries?date=<fecha del partido>` trae TODAS las
+  lesiones reportadas para partidos de ese día, de cualquier liga — se
+  filtra por equipo del lado del cliente. **Nota real encontrada**: `GET
+  /injuries?team=<id>&season=<temporada en curso>` está BLOQUEADO en el
+  plan gratuito ("Free plans do not have access to this season, try from
+  2022 to 2024") — por eso el proyecto usa `date` en vez de `team+season`,
+  que además es más barato en cuota (una sola llamada cubre todos los
+  partidos del día, no una por equipo).
 
-**Cómo correr los scripts sin instalar nada en tu PC**: como el resto de
-este proyecto, no hace falta Python local — hay un workflow de GitHub
-Actions dedicado, `verify_secondary_signals.yml`, que solo corre manualmente
-(nunca solo, no tiene `schedule`, así que no gasta tu cuota de API sin que
-tú lo dispares):
+**⚠️ El emparejamiento de equipos/partidos es por NOMBRE y es ESTRICTO a
+propósito** (ninguna de las dos APIs comparte ID de equipo con odds-api.io
+— ver `src/valuebet/team_match.py`): solo empareja si el nombre coincide
+exactamente tras normalizar (acentos, mayúsculas, sufijos genéricos como
+"FC"/"CF"). Una traducción real distinta (ej. "Bayern München" vs "Bayern
+Munich") NO empareja sin un alias explícito agregado a mano. Vas a ver picks
+sin ninguna señal secundaria mientras el matching no cubra esa variante de
+nombre — es preferible a mostrar el dato de un equipo o partido equivocado.
+Si notas en el log que un equipo real no está emparejando por una variación
+de nombre legítima, es candidato a sumarse a `NAME_ALIASES` en
+`team_match.py`.
+
+**Activadas en `config.example.yaml`** (`secondary_signals.playerelo.enabled`
+y `.injuries.enabled`, ambos `true`) — si alguna de las dos API keys sigue
+en placeholder o la API falla, ese pick simplemente sale sin esa línea extra
+(nunca tumba el resumen diario completo, ver
+`daily.py::_enrich_picks_with_secondary_signals_safely`).
+
+**Cómo correr los scripts de diagnóstico sin instalar nada en tu PC** (útil
+si en algún momento quieres re-verificar la forma de la respuesta, por
+ejemplo si algo deja de calzar): como el resto de este proyecto, no hace
+falta Python local — hay un workflow de GitHub Actions dedicado,
+`verify_secondary_signals.yml`, que solo corre manualmente (nunca solo, no
+tiene `schedule`, así que no gasta tu cuota de API sin que tú lo dispares):
 
 1. **Settings → Secrets and variables → Actions** en tu repo → agrega
    `PLAYERELO_API_KEY` y `APIFOOTBALL_API_KEY` con tus keys reales (gratis,
@@ -530,9 +545,6 @@ python scripts/verify_playerelo.py
 export APIFOOTBALL_API_KEY="tu-key-real"
 python scripts/verify_api_football.py "Real Madrid"
 ```
-
-`secondary_signals.*.enabled` queda en `false` en `config.example.yaml`
-hasta que el parseo real esté escrito.
 
 ## Despliegue 100% gratuito: GitHub Actions (no un servidor de Google Cloud)
 

@@ -76,3 +76,66 @@ def test_raw_get_does_not_retry_on_400():
         except RuntimeError:
             pass
     assert mock_get.call_count == 1
+
+
+# --- get_injuries_for_date / injuries_for_team: forma confirmada contra la
+# API real el 2026-08-25 con scripts/verify_api_football.py (ver el aviso
+# grande en injuries_provider.py, incluyendo el bloqueo real de
+# team+season=temporada-en-curso en el plan gratuito y por qué se usa date). ---
+
+_SAMPLE_INJURIES_RESPONSE = {
+    "get": "injuries",
+    "parameters": {"date": "2026-08-25"},
+    "errors": [],
+    "results": 2,
+    "response": [
+        {
+            "player": {"id": 348230, "name": "K. Aliyev", "type": "Missing Fixture", "reason": "Tendon Injury"},
+            "team": {"id": 13976, "name": "Sabah FA", "logo": "x"},
+            "fixture": {"id": 1622626, "date": "2026-08-25T16:45:00+00:00"},
+            "league": {"id": 2, "season": 2026, "name": "UEFA Champions League", "country": "World"},
+        },
+        {
+            "player": {"id": 174827, "name": "S. Solvet", "type": "Questionable", "reason": "Injury"},
+            "team": {"id": 13976, "name": "Sabah FA", "logo": "x"},
+            "fixture": {"id": 1622626, "date": "2026-08-25T16:45:00+00:00"},
+            "league": {"id": 2, "season": 2026, "name": "UEFA Champions League", "country": "World"},
+        },
+    ],
+}
+
+
+def test_get_injuries_for_date_returns_response_list():
+    provider = ApiFootballProvider(api_key="fake-key")
+    with patch.object(provider, "raw_get", return_value=_SAMPLE_INJURIES_RESPONSE) as mock_raw_get:
+        result = provider.get_injuries_for_date("2026-08-25")
+    assert result == _SAMPLE_INJURIES_RESPONSE["response"]
+    mock_raw_get.assert_called_once_with("/injuries", {"date": "2026-08-25"})
+
+
+def test_get_injuries_for_date_returns_empty_on_plan_error():
+    """Caso real encontrado (2026-08-25): team+season=temporada-en-curso
+    devuelve 200 OK pero con errors.plan — no debe tratarse como datos."""
+    provider = ApiFootballProvider(api_key="fake-key")
+    plan_error_response = {
+        "get": "injuries",
+        "parameters": {"team": "541", "season": "2026"},
+        "errors": {"plan": "Free plans do not have access to this season, try from 2022 to 2024."},
+        "results": 0,
+        "response": [],
+    }
+    with patch.object(provider, "raw_get", return_value=plan_error_response):
+        result = provider.get_injuries_for_date("2026-08-25")
+    assert result == []
+
+
+def test_injuries_for_team_filters_by_name():
+    notes = ApiFootballProvider.injuries_for_team(_SAMPLE_INJURIES_RESPONSE["response"], "Sabah FA")
+    assert len(notes) == 2
+    assert "K. Aliyev (Tendon Injury)" in notes
+    assert "S. Solvet (Injury)" in notes
+
+
+def test_injuries_for_team_returns_empty_for_other_team():
+    notes = ApiFootballProvider.injuries_for_team(_SAMPLE_INJURIES_RESPONSE["response"], "Real Madrid")
+    assert notes == []

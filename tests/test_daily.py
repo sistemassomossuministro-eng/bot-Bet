@@ -5,10 +5,17 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from valuebet.config import AppConfig, DailyConfig, OddsProviderConfig, ValueDetectionConfig
+from valuebet.config import (
+    AppConfig,
+    DailyConfig,
+    OddsProviderConfig,
+    PlayerEloConfig,
+    SecondarySignalsConfig,
+    ValueDetectionConfig,
+)
 from valuebet.daily import generate_daily_picks, select_daily_picks, settle_pending_daily_picks
 from valuebet.kelly import BankrollLimits
-from valuebet.models import Event, ValueBet
+from valuebet.models import BookmakerMarket, Event, Outcome, ValueBet
 from valuebet.odds_provider import EventResult
 from valuebet.storage.db import Storage
 
@@ -216,3 +223,82 @@ def test_generate_daily_picks_restricts_leagues_per_sport_only():
         calls = dict(provider.calls)
         assert calls["football"] is None  # [] global -> None -> todas las ligas
         assert calls["basketball"] == ["usa-nba"]
+
+
+class _FakeProviderWithValueBet:
+    """Un solo evento h2h con EV positivo real (Betplay vs Pinnacle) — para
+    probar que generate_daily_picks no truena si secondary_signals está
+    activado pero con una api_key placeholder (ValueError esperado y
+    capturado, ver daily.py::_enrich_picks_with_secondary_signals_safely)."""
+
+    def __init__(self):
+        self._event = Event(
+            event_id="today1",
+            sport="football",
+            league="Primera A",
+            home_team="Millonarios",
+            away_team="Nacional",
+            commence_time=datetime.utcnow() + timedelta(hours=5),
+            bookmakers={
+                "Pinnacle": [
+                    BookmakerMarket(
+                        bookmaker="Pinnacle",
+                        market_key="h2h",
+                        updated_at=None,
+                        outcomes=[Outcome("home", 1.95), Outcome("draw", 3.60), Outcome("away", 4.20)],
+                    )
+                ],
+                "Betplay": [
+                    BookmakerMarket(
+                        bookmaker="Betplay",
+                        market_key="h2h",
+                        updated_at=None,
+                        outcomes=[Outcome("home", 2.30), Outcome("draw", 3.30), Outcome("away", 3.80)],
+                    )
+                ],
+            },
+        )
+
+    def list_events(self, sport, leagues=None, lookahead_days=3, limit=None):
+        return [self._event]
+
+    def get_events_odds(self, event_ids, bookmakers):
+        return [self._event for _ in event_ids]
+
+    def get_event_result(self, event_id):
+        raise NotImplementedError
+
+
+def test_generate_daily_picks_does_not_crash_with_placeholder_secondary_signals_key():
+    """secondary_signals.playerelo.enabled=true con una api_key placeholder
+    (usuario aún no la configuró) debe registrar un warning y seguir sin esa
+    señal — nunca tumbar el resumen diario completo."""
+    with tempfile.TemporaryDirectory() as tmp:
+        storage = Storage(str(Path(tmp) / "t.db"))
+        cfg = AppConfig(
+            bankroll=BankrollLimits(total=1_000_000),
+            odds_provider=OddsProviderConfig(
+                name="odds_api_io",
+                api_key="x",
+                base_url="https://x",
+                target_bookmakers=["Betplay"],
+                reference_bookmakers=["Pinnacle"],
+                sports=["football"],
+            ),
+            value_detection=ValueDetectionConfig(min_ev_pct=1.0),
+            daily=DailyConfig(num_picks=10, max_picks_per_event=1),
+            telegram=None,
+            db_path="",
+            output_dir="output",
+            log_level="INFO",
+            log_file=None,
+            secondary_signals=SecondarySignalsConfig(
+                playerelo=PlayerEloConfig(enabled=True, api_key="TU_PLAYERELO_API_KEY_AQUI")
+            ),
+        )
+        provider = _FakeProviderWithValueBet()
+
+        picks = generate_daily_picks(cfg, provider, storage)
+
+        assert len(picks) == 1
+        assert picks[0].playerelo_note is None  # nunca se pudo construir el provider real

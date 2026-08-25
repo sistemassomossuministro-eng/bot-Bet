@@ -323,6 +323,19 @@ def test_example_config_football_leagues_filter():
     assert leagues_for_sport(cfg.odds_provider, "basketball") == ["usa-nba"]
 
 
+def test_example_config_secondary_signals_enabled():
+    """config.example.yaml debe traer PlayerElo e injuries activados
+    (2026-08-25, tras verificar el parseo contra respuestas reales de ambas
+    APIs) — red de seguridad ante un `enabled: false` accidental al editar
+    el yaml."""
+    example_path = Path(__file__).resolve().parents[1] / "config.example.yaml"
+    cfg = load_config(str(example_path))
+
+    assert cfg.secondary_signals.playerelo.enabled is True
+    assert cfg.secondary_signals.injuries.enabled is True
+    assert cfg.secondary_signals.injuries.via_rapidapi is False
+
+
 def test_leagues_by_sport_parsed_from_yaml():
     # leagues_by_sport debe quedar DENTRO del bloque odds_provider (no al final
     # del yaml como value_detection) para que se parsee como parte de él.
