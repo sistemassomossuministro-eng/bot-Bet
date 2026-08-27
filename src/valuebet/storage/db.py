@@ -310,6 +310,25 @@ class Storage:
                 "SELECT * FROM daily_picks WHERE pick_date = ? ORDER BY ev_pct DESC", (pick_date,)
             ).fetchall()
 
+    def recent_daily_pick_event_ids(self, since_pick_date: str) -> set:
+        """event_id de todos los picks ya guardados en daily_picks con
+        pick_date >= since_pick_date.
+
+        Se agregó junto con `daily.lookahead_days` > 1 (ago-2026): antes,
+        cada corrida solo miraba los partidos de "mañana", así que un mismo
+        evento nunca podía aparecer en dos corridas distintas antes de
+        jugarse. Al ampliar la ventana para encontrar más candidatos, un
+        partido lejano (ej. a 3 días) puede seguir cumpliendo las reglas de
+        valor varios días seguidos y, sin este chequeo, `generate_daily_picks`
+        lo volvería a guardar como pick "nuevo" cada mañana — el usuario
+        recibiría el mismo partido recomendado 2-3 veces por Telegram."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT DISTINCT event_id FROM daily_picks WHERE pick_date >= ?",
+                (since_pick_date,),
+            ).fetchall()
+        return {row["event_id"] for row in rows}
+
     def list_pending_picks_before(self, pick_date: str):
         """Picks aún 'pending' de fechas anteriores a pick_date (para liquidar)."""
         with self._conn() as conn:

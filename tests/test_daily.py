@@ -1,6 +1,6 @@
 import sys
 import tempfile
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -358,3 +358,46 @@ def test_generate_daily_picks_does_not_crash_with_placeholder_secondary_signals_
 
         assert len(picks) == 1
         assert picks[0].playerelo_note is None  # nunca se pudo construir el provider real
+
+
+def test_generate_daily_picks_does_not_repeat_same_event_across_consecutive_runs():
+    """Bug real evitado al subir daily.lookahead_days de 1 a 3 (ago-2026): un
+    mismo partido lejano puede seguir cumpliendo las reglas de valor varias
+    corridas seguidas antes de jugarse — sin dedupe, se recomendaría el mismo
+    evento por Telegram dos (o tres) mañanas seguidas. `_FakeProviderWithValueBet`
+    siempre devuelve el mismo evento/cuotas, simulando justo ese escenario."""
+    with tempfile.TemporaryDirectory() as tmp:
+        storage = Storage(str(Path(tmp) / "t.db"))
+        cfg = AppConfig(
+            bankroll=BankrollLimits(total=1_000_000),
+            odds_provider=OddsProviderConfig(
+                name="odds_api_io",
+                api_key="x",
+                base_url="https://x",
+                target_bookmakers=["Betplay"],
+                reference_bookmakers=["Pinnacle"],
+                sports=["football"],
+            ),
+            value_detection=ValueDetectionConfig(min_ev_pct=1.0),
+            daily=DailyConfig(num_picks=10, max_picks_per_event=1, lookahead_days=3),
+            telegram=None,
+            db_path="",
+            output_dir="output",
+            log_level="INFO",
+            log_file=None,
+        )
+        provider = _FakeProviderWithValueBet()
+
+        day1_picks = generate_daily_picks(cfg, provider, storage, pick_date=date(2026, 8, 24))
+        day2_picks = generate_daily_picks(cfg, provider, storage, pick_date=date(2026, 8, 25))
+
+        assert len(day1_picks) == 1
+        assert day2_picks == []  # mismo event_id ya recomendado ayer -> se omite
+
+        # También confirma que no quedó una segunda fila del mismo evento en storage.
+        all_event_ids = [
+            row["event_id"]
+            for pick_date_str in ("2026-08-24", "2026-08-25")
+            for row in storage.list_picks_for_date(pick_date_str)
+        ]
+        assert all_event_ids == ["today1"]

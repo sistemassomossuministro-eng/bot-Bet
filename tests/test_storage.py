@@ -206,3 +206,24 @@ def test_settle_after_reject_does_not_double_count_in_pending():
         row = storage.get(bet_id)
         assert row["status"] == "rejected"
         assert row["ev_pct"] == 10.0  # no se sobreescribió
+
+
+def test_recent_daily_pick_event_ids_includes_dates_on_or_after_since():
+    """Se agregó junto con daily.lookahead_days > 1 (ago-2026): un mismo
+    evento lejano puede seguir cumpliendo las reglas de valor varias
+    corridas seguidas antes de jugarse — generate_daily_picks usa este
+    método para no recomendarlo dos veces por Telegram."""
+    with tempfile.TemporaryDirectory() as tmp:
+        storage = Storage(str(Path(tmp) / "test.db"))
+        storage.add_daily_pick("2026-08-24", make_value_bet(event_id="evt-old"))
+        storage.add_daily_pick("2026-08-26", make_value_bet(event_id="evt-recent"))
+
+        ids = storage.recent_daily_pick_event_ids("2026-08-25")
+
+        assert ids == {"evt-recent"}
+
+
+def test_recent_daily_pick_event_ids_empty_when_nothing_stored():
+    with tempfile.TemporaryDirectory() as tmp:
+        storage = Storage(str(Path(tmp) / "test.db"))
+        assert storage.recent_daily_pick_event_ids("2026-08-01") == set()

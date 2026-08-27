@@ -266,7 +266,7 @@ originales se mantienen:
    en cuestión (un club amateur contra uno de Bundesliga) sí pueda terminar
    en goleada. Pon `max_totals_point: null` en `config.yaml` si prefieres
    ver esas líneas de todos modos.
-5. **`value_detection.min_odds` / `max_odds` (1.40 – 3.00 por defecto)** —
+5. **`value_detection.min_odds` / `max_odds` (1.40 – 3.50 por defecto)** —
    ver la sección "Rango de cuota" justo abajo: generaliza el mismo problema
    de `max_totals_point` a cualquier mercado, no solo `totals`.
 
@@ -286,17 +286,23 @@ selecciona sistemáticamente estos casos — son justo los que más EV
 *aparente* muestran, precisamente porque el error de estimación se
 magnifica más ahí.
 
-`value_detection.min_odds` (1.40 por defecto) y `max_odds` (3.00 por
+`value_detection.min_odds` (1.40 por defecto) y `max_odds` (3.50 por
 defecto) descartan cualquier pick con cuota ofrecida (`target_bookmakers`)
 fuera de ese rango, en cualquier mercado habilitado — antes de que llegue
 al ranking por EV. No elimina el riesgo de estimación (`min_odds`/`max_odds`
 no reemplazan a un modelo bien calibrado), pero acota el sistema a la zona
 donde un error de calibración pesa proporcionalmente menos. El rango
-1.40–3.00 es el que el propio usuario del proyecto definió como punto de
-partida razonable, no un óptimo demostrado — si el volumen diario de picks
-queda muy bajo con las ligas curadas (ver "Alcance" más arriba) puede tener
-sentido ampliarlo (ej. 1.30–5.00). Pon `min_odds: null` y/o `max_odds: null`
-en `config.yaml` para desactivar cada tope por separado.
+original (1.40–3.00) era el punto de partida del propio usuario del
+proyecto, no un óptimo demostrado — con las 15 ligas curadas activas dejó al
+bot en 0 picks/día 3 días seguidos, y revisando el log el `max_odds` de 3.00
+era por lejos el filtro más disparado (la mayoría de las cuotas descartadas
+estaban muy por encima del tope, no rozándolo). Se subió a 3.50 como primer
+ajuste (2026-08-26), junto con `daily.lookahead_days` (ver "Ventana de días"
+más abajo) — antes de tocar `min_ev_pct` (más delicado, ver arriba) o volver
+a abrir el filtro de ligas (último recurso). Si el volumen diario sigue
+bajo, considera subirlo otro escalón (ej. 4.00–4.50) antes de tocar esos
+otros dos. Pon `min_odds: null` y/o `max_odds: null` en `config.yaml` para
+desactivar cada tope por separado.
 
 **Lo que este filtro NO resuelve**: la propuesta original también incluía
 comparar la probabilidad del modelo contra un consenso de varias casas sin
@@ -313,6 +319,32 @@ De todos modos, vale la pena revisar el log las primeras corridas después de
 activar un mercado nuevo, buscando la palabra "descarta" — si aparece muy
 seguido para tu cobertura de ligas, puede indicar que algún bookmaker manda
 el campo con otro nombre distinto a `hdp`/`point` que todavía no se cubrió.
+
+### Ventana de días (`daily.lookahead_days`) y por qué no duplica picks
+
+Con las 15 ligas curadas activas (ver "Alcance" arriba), el resumen diario
+llegó a estar 3 días seguidos en 0 picks. Revisando el log, el motivo real no
+era el filtro de ligas (esas SÍ traía partidos reales) sino la combinación
+de `max_odds` (ver arriba) con una ventana de solo 1 día — algunos días
+simplemente no hay muchos partidos de estas ligas específicas jugándose
+mañana. `daily.lookahead_days` se subió de 1 a 3 (2026-08-26) junto con el
+ajuste de `max_odds`: es el cambio más seguro de los dos porque no baja
+ningún estándar de calidad, solo amplía cuántos partidos candidatos ve el
+job cada mañana.
+
+**Por qué esto no te va a mandar el mismo partido dos o tres mañanas
+seguidas**: un partido a 3 días puede seguir cumpliendo las reglas de valor
+en las corridas de los días siguientes, antes de jugarse. `generate_daily_picks`
+descarta cualquier candidato cuyo `event_id` ya se haya guardado como pick en
+una corrida de los `lookahead_days - 1` días anteriores
+(`Storage.recent_daily_pick_event_ids`, en `daily.py`) — así que cada partido
+solo se recomienda una vez, la primera corrida en la que califica, aunque
+la ventana ampliada lo siga viendo días después.
+
+Si con esto sigue llegando poco volumen, el siguiente ajuste recomendado
+(en orden, de menos a más riesgoso) es subir `max_odds` otro escalón,
+después `min_ev_pct`, y como último recurso reabrir el filtro de ligas —
+ver "Rango de cuota" arriba para el detalle de cada uno.
 
 **Ambos anotan (btts / "Both Teams To Score")**: a diferencia de
 totals/spreads, no es una línea con un valor numérico (no lleva `hdp`) sino
@@ -348,8 +380,9 @@ Cada mañana, un solo job (`valuebet.daily_job`) hace esto en orden:
 2. **Si hoy es día 1 del mes**: cierra el mes anterior con un resumen aparte —
    ver la sección "Resumen mensual" más abajo.
 3. **Cuotas de hoy, ligas curadas**: lista los partidos de fútbol de las
-   ligas configuradas (ver "Alcance" más arriba) para la ventana del día
-   (`daily.lookahead_days`) y consulta cuotas públicas de Betplay (ver
+   ligas configuradas (ver "Alcance" más arriba) para la ventana de los
+   próximos `daily.lookahead_days` días (3 por defecto — ver "Ventana de
+   días" más abajo) y consulta cuotas públicas de Betplay (ver
    `odds_provider.target_bookmakers` — Wplay no está cubierta por el
    proveedor actual, ver "Alcance" más arriba) y de un libro de referencia
    (por defecto Bet365 — no Pinnacle, ver "Sobre el libro de referencia" más
@@ -366,8 +399,12 @@ Cada mañana, un solo job (`valuebet.daily_job`) hace esto en orden:
    resultado, y calcula el EV% de la cuota que ofrece Betplay.
 5. **Top 10 del día**: selecciona los 10 picks con mayor EV, diversificando
    por partido (máx. 1 selección por partido salvo que no alcancen picks
-   distintos). Los guarda en la base de datos y envía el mensaje + la imagen
-   (`output/latest_picks.png`) por Telegram.
+   distintos). Antes de seleccionar, descarta cualquier candidato cuyo
+   partido ya se haya recomendado en una corrida anterior dentro de la
+   ventana de `lookahead_days` (ver "Ventana de días" abajo — evita
+   recomendar el mismo partido 2-3 mañanas seguidas). Los guarda en la base
+   de datos y envía el mensaje + la imagen (`output/latest_picks.png`) por
+   Telegram.
 6. **Cola de Instagram**: si Instagram está configurado, convierte a JPEG cada
    imagen generada en la corrida (picks/resultados/resumen mensual) y las dos
    deja anotadas en `output/instagram_queue.json`. La publicación real ocurre

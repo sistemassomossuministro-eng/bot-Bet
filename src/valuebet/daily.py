@@ -167,6 +167,27 @@ def generate_daily_picks(
         # ejecutadas automáticamente una tras otra.
     )
 
+    # Con daily.lookahead_days > 1, un mismo partido lejano puede seguir
+    # cumpliendo las reglas de valor varias corridas seguidas antes de
+    # jugarse — sin este filtro, se recomendaría el mismo evento 2-3 veces
+    # por Telegram en días distintos (ver Storage.recent_daily_pick_event_ids).
+    # Ventana de exclusión = lookahead_days - 1 días hacia atrás: es lo
+    # máximo que un mismo evento podría haber sido visible en una corrida
+    # anterior dentro de la ventana actual.
+    if cfg.daily.lookahead_days > 1:
+        since = (pick_date - timedelta(days=cfg.daily.lookahead_days - 1)).isoformat()
+        already_picked_event_ids = storage.recent_daily_pick_event_ids(since)
+        before = len(candidates)
+        candidates = [c for c in candidates if c.event.event_id not in already_picked_event_ids]
+        skipped = before - len(candidates)
+        if skipped:
+            logger.info(
+                "%d candidato(s) omitido(s) por ya haber sido recomendados en una corrida anterior "
+                "(mismo partido, dentro de la ventana de %d día(s))",
+                skipped,
+                cfg.daily.lookahead_days,
+            )
+
     picks = select_daily_picks(candidates, cfg.daily.num_picks, cfg.daily.max_picks_per_event)
 
     _enrich_picks_with_secondary_signals_safely(cfg, picks)
