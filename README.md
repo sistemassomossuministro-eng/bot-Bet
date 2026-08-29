@@ -266,7 +266,7 @@ originales se mantienen:
    en cuestión (un club amateur contra uno de Bundesliga) sí pueda terminar
    en goleada. Pon `max_totals_point: null` en `config.yaml` si prefieres
    ver esas líneas de todos modos.
-5. **`value_detection.min_odds` / `max_odds` (1.40 – 4.00 por defecto)** —
+5. **`value_detection.min_odds` / `max_odds` (1.40 – 3.50 por defecto)** —
    ver la sección "Rango de cuota" justo abajo: generaliza el mismo problema
    de `max_totals_point` a cualquier mercado, no solo `totals`.
 
@@ -286,7 +286,7 @@ selecciona sistemáticamente estos casos — son justo los que más EV
 *aparente* muestran, precisamente porque el error de estimación se
 magnifica más ahí.
 
-`value_detection.min_odds` (1.40 por defecto) y `max_odds` (4.00 por
+`value_detection.min_odds` (1.40 por defecto) y `max_odds` (3.50 por
 defecto) descartan cualquier pick con cuota ofrecida (`target_bookmakers`)
 fuera de ese rango, en cualquier mercado habilitado — antes de que llegue
 al ranking por EV. No elimina el riesgo de estimación (`min_odds`/`max_odds`
@@ -296,14 +296,13 @@ original (1.40–3.00) era el punto de partida del propio usuario del
 proyecto, no un óptimo demostrado — con las 15 ligas curadas activas dejó al
 bot en 0 picks/día 3 días seguidos, y revisando el log el `max_odds` de 3.00
 era por lejos el filtro más disparado (la mayoría de las cuotas descartadas
-estaban muy por encima del tope, no rozándolo). Se subió a 3.50 el
-2026-08-26 (junto con `daily.lookahead_days`, ver "Ventana de días" más
-abajo), pero el bot siguió en 0 picks, así que se subió otro escalón a 4.00
-el 2026-08-27 — antes de tocar `min_ev_pct` (más delicado, ver arriba) o
-volver a abrir el filtro de ligas (último recurso). Si el volumen diario
-sigue bajo con 4.00, ese es el siguiente lugar donde mirar: `min_ev_pct` o
-las ligas, en ese orden. Pon `min_odds: null` y/o `max_odds: null` en
-`config.yaml` para desactivar cada tope por separado.
+estaban muy por encima del tope, no rozándolo). Se subió a 3.50 como primer
+ajuste (2026-08-26), junto con `daily.lookahead_days` (ver "Ventana de días"
+más abajo) — antes de tocar `min_ev_pct` (más delicado, ver arriba) o volver
+a abrir el filtro de ligas (último recurso). Si el volumen diario sigue
+bajo, considera subirlo otro escalón (ej. 4.00–4.50) antes de tocar esos
+otros dos. Pon `min_odds: null` y/o `max_odds: null` en `config.yaml` para
+desactivar cada tope por separado.
 
 **Lo que este filtro NO resuelve**: la propuesta original también incluía
 comparar la probabilidad del modelo contra un consenso de varias casas sin
