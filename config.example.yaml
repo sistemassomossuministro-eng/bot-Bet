@@ -159,20 +159,21 @@ value_detection:
                                    # línea principal (2.5), así que confiar en esa cuota como "justa" es más
                                    # riesgoso. Pon `null` para desactivar este tope si quieres ver esas líneas.
   min_odds: 1.40                  # filtro general de rango de CUOTA ofrecida (target_bookmakers), aplica
-  max_odds: 3.50                  # a TODOS los mercados habilitados (h2h, totals, btts...), no solo
+  max_odds: 4.00                  # a TODOS los mercados habilitados (h2h, totals, btts...), no solo
                                    # totals. Mismo problema de fondo que max_totals_point pero más
                                    # amplio: un resultado poco probable es más difícil de calibrar bien —
                                    # un error chico en la probabilidad estimada se magnifica mucho más en
                                    # una cuota alta que cerca de evens (ver el README, "Rango de cuota",
                                    # para el detalle con ejemplos numéricos).
-                                   # AJUSTE REAL (2026-08-26): el tope original de 3.00 dejó al bot en
+                                   # AJUSTE REAL, en 2 pasos: el tope original de 3.00 dejó al bot en
                                    # 0 picks/día 3 días seguidos con las 15 ligas curadas — revisando los
                                    # logs, era por lejos el filtro más disparado (la mayoría de las cuotas
                                    # descartadas estaban muy por encima, no rozando el límite). Se subió a
-                                   # 3.50 como primer ajuste (junto con `daily.lookahead_days`, ver abajo),
-                                   # antes de tocar `min_ev_pct` (más delicado) o el filtro de ligas (último
-                                   # recurso). Si sigue sin llegar nada, sube este valor un escalón más
-                                   # (ej. 4.00) antes de tocar los otros dos.
+                                   # 3.50 el 2026-08-26 (junto con `daily.lookahead_days`, ver abajo), pero
+                                   # el bot siguió en 0 picks, así que se subió otro escalón a 4.00 el
+                                   # 2026-08-27 — antes de tocar `min_ev_pct` (más delicado) o el filtro de
+                                   # ligas (último recurso). Si sigue sin llegar nada con 4.00, ese es el
+                                   # siguiente lugar donde mirar (ver README, "Rango de cuota").
                                    # Pon `null` en cualquiera de los dos para desactivar ese tope.
 
 daily:

@@ -266,7 +266,7 @@ originales se mantienen:
    en cuestión (un club amateur contra uno de Bundesliga) sí pueda terminar
    en goleada. Pon `max_totals_point: null` en `config.yaml` si prefieres
    ver esas líneas de todos modos.
-5. **`value_detection.min_odds` / `max_odds` (1.40 – 3.50 por defecto)** —
+5. **`value_detection.min_odds` / `max_odds` (1.40 – 4.00 por defecto)** —
    ver la sección "Rango de cuota" justo abajo: generaliza el mismo problema
    de `max_totals_point` a cualquier mercado, no solo `totals`.
 
@@ -286,7 +286,7 @@ selecciona sistemáticamente estos casos — son justo los que más EV
 *aparente* muestran, precisamente porque el error de estimación se
 magnifica más ahí.
 
-`value_detection.min_odds` (1.40 por defecto) y `max_odds` (3.50 por
+`value_detection.min_odds` (1.40 por defecto) y `max_odds` (4.00 por
 defecto) descartan cualquier pick con cuota ofrecida (`target_bookmakers`)
 fuera de ese rango, en cualquier mercado habilitado — antes de que llegue
 al ranking por EV. No elimina el riesgo de estimación (`min_odds`/`max_odds`
@@ -296,13 +296,41 @@ original (1.40–3.00) era el punto de partida del propio usuario del
 proyecto, no un óptimo demostrado — con las 15 ligas curadas activas dejó al
 bot en 0 picks/día 3 días seguidos, y revisando el log el `max_odds` de 3.00
 era por lejos el filtro más disparado (la mayoría de las cuotas descartadas
-estaban muy por encima del tope, no rozándolo). Se subió a 3.50 como primer
-ajuste (2026-08-26), junto con `daily.lookahead_days` (ver "Ventana de días"
-más abajo) — antes de tocar `min_ev_pct` (más delicado, ver arriba) o volver
-a abrir el filtro de ligas (último recurso). Si el volumen diario sigue
-bajo, considera subirlo otro escalón (ej. 4.00–4.50) antes de tocar esos
-otros dos. Pon `min_odds: null` y/o `max_odds: null` en `config.yaml` para
-desactivar cada tope por separado.
+estaban muy por encima del tope, no rozándolo). Se subió a 3.50 el
+2026-08-26 (junto con `daily.lookahead_days`, ver "Ventana de días" más
+abajo), pero el bot siguió en 0 picks, así que se subió otro escalón a 4.00
+el 2026-08-27 — y el bot **siguió** en 0 picks (confirmado con un log de
+producción del 2026-08-29). Pon `min_odds: null` y/o `max_odds: null` en
+`config.yaml` para desactivar cada tope por separado.
+
+**Por qué se dejó de subir `max_odds` a ciegas**: revisando ese log del
+2026-08-29 a mano, las cuotas descartadas por `max_odds` no estaban
+dispersas — se agrupaban justo por encima del tope (4.00-5.00) en casi todos
+los partidos. Subir el tope una vez más muy probablemente solo habría
+repetido el patrón: el "techo" de cuotas rechazadas sube junto con
+`max_odds`, así que cada escalón se siente como si no hubiera pasado nada.
+Ese patrón, sin embargo, era una impresión basada en contar líneas de log a
+mano — el log solo registra los descartes por `max_odds` (y por
+`max_totals_point`/`max_ev_pct`); los descartes por `min_odds` y, más
+importante, por `min_ev_pct` (`ev_pct < min_ev_pct: continue`) son
+**completamente silenciosos**. Es decir: no había forma de saber, con los
+logs de antes del 2026-08-29, si los candidatos que sí caían dentro del
+rango de cuota se estaban quedando cerca del 3.0% de EV mínimo o muy lejos —
+cualquier ajuste de `min_odds`/`max_odds`/`min_ev_pct` se hacía adivinando.
+
+Por eso, en vez de subir `max_odds` (o `min_ev_pct`) un escalón más sin
+datos, se agregó (2026-08-29) un resumen de "near misses": cada corrida de
+`generate_daily_picks` ahora registra, en un solo log INFO, cuántos
+candidatos cayeron dentro del rango de cuota configurado, cuántos de esos no
+llegaron al `min_ev_pct` exigido, y el EV real más alto encontrado ese día
+(con su partido, mercado, selección, cuota y casa) — se calcula igual que
+antes de aplicar el corte de `min_ev_pct`, así que muestra el EV real
+aunque termine en 0 picks. Ver `NearMiss` en `value_finder.py` y
+`_log_near_miss_summary` en `daily.py`. Con esto, la próxima corrida en 0
+picks ya no es una caja negra: si el mejor EV real ronda 2.5-2.9%, el
+siguiente ajuste correcto es bajar un poco `min_ev_pct`; si ronda 0% o
+negativo, el problema no es el umbral sino la calibración misma (o hace
+falta más volumen de partidos, no más tolerancia de EV).
 
 **Lo que este filtro NO resuelve**: la propuesta original también incluía
 comparar la probabilidad del modelo contra un consenso de varias casas sin
@@ -341,10 +369,13 @@ una corrida de los `lookahead_days - 1` días anteriores
 solo se recomienda una vez, la primera corrida en la que califica, aunque
 la ventana ampliada lo siga viendo días después.
 
-Si con esto sigue llegando poco volumen, el siguiente ajuste recomendado
-(en orden, de menos a más riesgoso) es subir `max_odds` otro escalón,
-después `min_ev_pct`, y como último recurso reabrir el filtro de ligas —
-ver "Rango de cuota" arriba para el detalle de cada uno.
+Si con esto sigue llegando poco volumen, el siguiente ajuste ya no es subir
+`max_odds` a ciegas otra vez (ver "Por qué se dejó de subir `max_odds` a
+ciegas" arriba): la corrida de producción siguiente al 2026-08-29 trae el
+resumen de near-misses en el log, y esa cifra (el EV real más alto
+encontrado, aunque haya sido descartado) es la que decide si el siguiente
+paso es bajar un poco `min_ev_pct` o, como último recurso, reabrir el
+filtro de ligas — ver "Rango de cuota" arriba para el detalle de cada uno.
 
 **Ambos anotan (btts / "Both Teams To Score")**: a diferencia de
 totals/spreads, no es una línea con un valor numérico (no lleva `hdp`) sino

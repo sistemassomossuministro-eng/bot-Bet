@@ -6,7 +6,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from valuebet.kelly import BankrollLimits
 from valuebet.models import BookmakerMarket, Event, Outcome
-from valuebet.value_finder import find_value_bets, find_value_bets_in_event
+from valuebet.value_finder import NearMiss, find_value_bets, find_value_bets_in_event
 
 
 def make_event() -> Event:
@@ -412,3 +412,76 @@ def test_odds_range_allows_picks_within_range():
     )
     # 'home' se ofrece a 2.20 en Betplay — dentro de 1.40-3.00.
     assert any(vb.selection == "home" for vb in results)
+
+
+def test_near_misses_recorded_even_when_below_min_ev_pct():
+    """El bug real que motivó NearMiss: `ev_pct < min_ev_pct: continue` descarta
+    en silencio. Con `near_misses` pasado, el candidato debe quedar registrado
+    con su EV real aunque nunca se convierta en ValueBet — es lo único que
+    permite ver, en un día de 0 picks, qué tan cerca estuvo el mejor candidato
+    del umbral exigido."""
+    event = make_event()
+    near_misses: list = []
+
+    results = find_value_bets_in_event(
+        event,
+        target_bookmakers=["Betplay"],
+        reference_bookmakers=["Pinnacle"],
+        devig_method="multiplicative",
+        min_ev_pct=50.0,  # imposible de alcanzar -> garantiza 0 picks
+        min_reference_books=1,
+        near_misses=near_misses,
+    )
+
+    assert results == []
+    # Los 3 resultados del mercado h2h (home/draw/away) se evalúan y registran.
+    assert len(near_misses) == 3
+    selections = {nm.selection for nm in near_misses}
+    assert selections == {"home", "draw", "away"}
+
+    home_nm = next(nm for nm in near_misses if nm.selection == "home")
+    assert home_nm.event_label == event.label()
+    assert home_nm.market_key == "h2h"
+    assert home_nm.bookmaker == "Betplay"
+    assert home_nm.offered_odds == 2.20
+    # Ya sabemos por otro test que 'home' tiene EV real > 1.0% con este fixture;
+    # aquí debe seguir siendo el mismo EV real, aunque no haya llegado a 50%.
+    assert home_nm.ev_pct > 1.0
+    assert all(isinstance(nm, NearMiss) for nm in near_misses)
+
+
+def test_near_misses_default_none_does_not_break_existing_callers():
+    """`near_misses=None` (el default) debe comportarse exactamente igual que
+    antes de agregar la función — ningún cambio de comportamiento para
+    llamadores existentes como main.py::run_cycle."""
+    event = make_event()
+    results = find_value_bets_in_event(
+        event,
+        target_bookmakers=["Betplay"],
+        reference_bookmakers=["Pinnacle"],
+        devig_method="multiplicative",
+        min_ev_pct=1.0,
+        min_reference_books=1,
+    )
+    assert len(results) == 1
+    assert results[0].selection == "home"
+
+
+def test_find_value_bets_threads_near_misses_across_events():
+    """`find_value_bets` (la función multi-evento) debe pasar el mismo `near_misses`
+    a cada evento, acumulando en una sola lista."""
+    event = make_event()
+    near_misses: list = []
+
+    results = find_value_bets(
+        [event],
+        target_bookmakers=["Betplay"],
+        reference_bookmakers=["Pinnacle"],
+        devig_method="multiplicative",
+        min_ev_pct=50.0,
+        min_reference_books=1,
+        near_misses=near_misses,
+    )
+
+    assert results == []
+    assert len(near_misses) == 3

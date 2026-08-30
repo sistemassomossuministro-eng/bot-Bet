@@ -17,7 +17,7 @@ from .odds_provider import OddsProvider
 from .secondary_signals import enrich_picks_with_secondary_signals
 from .settlement import settle_selection
 from .storage.db import Storage
-from .value_finder import find_value_bets
+from .value_finder import NearMiss, find_value_bets
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +26,42 @@ BOGOTA_OFFSET = timedelta(hours=-5)
 
 def bogota_today() -> date:
     return (datetime.utcnow() + BOGOTA_OFFSET).date()
+
+
+def _log_near_miss_summary(near_misses: List[NearMiss], min_ev_pct: float) -> None:
+    """Resume, en una sola línea INFO, qué tan cerca estuvo del mínimo exigido
+    el mejor candidato real evaluado dentro del rango de cuota — aunque haya
+    terminado en 0 picks.
+
+    Se agregó (2026-08-29) tras varios días seguidos en 0 picks y subir
+    `max_odds` dos veces sin resultado: sin esto, el log solo decía "0/10
+    picks", sin decir si los candidatos que sí cayeron en rango se quedaron
+    rozando el 3.0% de EV o muy lejos — cualquier ajuste de min_odds/
+    max_odds/min_ev_pct se hacía a ciegas. Con esto, la próxima decisión de
+    ajuste se toma con el EV real más alto encontrado ese día, no adivinando."""
+    if not near_misses:
+        logger.info(
+            "Ningún candidato cayó dentro del rango de cuota configurado (min_odds/max_odds) hoy — "
+            "no hubo nada que evaluar contra el EV mínimo de %.1f%%.",
+            min_ev_pct,
+        )
+        return
+
+    best = max(near_misses, key=lambda nm: nm.ev_pct)
+    below = sum(1 for nm in near_misses if nm.ev_pct < min_ev_pct)
+    logger.info(
+        "%d candidato(s) evaluados dentro del rango de cuota (%d no llegaron al EV mínimo de %.1f%%). "
+        "Mejor EV real encontrado: %.2f%% — %s · %s · %s @ %.2f (%s).",
+        len(near_misses),
+        below,
+        min_ev_pct,
+        best.ev_pct,
+        best.event_label,
+        best.market_key,
+        best.selection,
+        best.offered_odds,
+        best.bookmaker,
+    )
 
 
 def select_daily_picks(
@@ -150,6 +186,11 @@ def generate_daily_picks(
         except Exception:
             logger.exception("Fallo al obtener cuotas en lote para '%s' (%d eventos)", sport, len(event_ids))
 
+    # near_misses: cualquier candidato que sí cayó dentro del rango de cuota
+    # (min_odds/max_odds) y sí se pudo devigar/calcular su EV real, aunque no
+    # haya llegado a min_ev_pct — ver NearMiss en value_finder.py. Puramente
+    # para el log de abajo, nunca se usa para elegir picks.
+    near_misses: List[NearMiss] = []
     candidates = find_value_bets(
         events,
         target_bookmakers=cfg.odds_provider.target_bookmakers,
@@ -162,10 +203,12 @@ def generate_daily_picks(
         max_totals_point=cfg.value_detection.max_totals_point,
         min_odds=cfg.value_detection.min_odds,
         max_odds=cfg.value_detection.max_odds,
+        near_misses=near_misses,
         # Nota: aquí NO se aplican límites de banca/Kelly — el resumen diario es
         # una lista informativa de oportunidades, no una secuencia de apuestas
         # ejecutadas automáticamente una tras otra.
     )
+    _log_near_miss_summary(near_misses, cfg.value_detection.min_ev_pct)
 
     # Con daily.lookahead_days > 1, un mismo partido lejano puede seguir
     # cumpliendo las reglas de valor varias corridas seguidas antes de

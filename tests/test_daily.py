@@ -2,6 +2,7 @@ import sys
 import tempfile
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -13,11 +14,17 @@ from valuebet.config import (
     SecondarySignalsConfig,
     ValueDetectionConfig,
 )
-from valuebet.daily import generate_daily_picks, select_daily_picks, settle_pending_daily_picks
+from valuebet.daily import (
+    _log_near_miss_summary,
+    generate_daily_picks,
+    select_daily_picks,
+    settle_pending_daily_picks,
+)
 from valuebet.kelly import BankrollLimits
 from valuebet.models import BookmakerMarket, Event, Outcome, ValueBet
 from valuebet.odds_provider import EventResult
 from valuebet.storage.db import Storage
+from valuebet.value_finder import NearMiss
 
 
 def make_vb(event_id, ev_pct, selection="home") -> ValueBet:
@@ -401,3 +408,95 @@ def test_generate_daily_picks_does_not_repeat_same_event_across_consecutive_runs
             for row in storage.list_picks_for_date(pick_date_str)
         ]
         assert all_event_ids == ["today1"]
+
+
+def test_log_near_miss_summary_with_empty_list():
+    """Sin candidatos en rango de cuota, el log debe decir explícitamente que no
+    hubo nada que evaluar contra el EV mínimo — no simplemente callar."""
+    with patch("valuebet.daily.logger") as mock_logger:
+        _log_near_miss_summary([], min_ev_pct=3.0)
+
+    assert mock_logger.info.call_count == 1
+    logged_text = " ".join(str(call) for call in mock_logger.info.call_args_list)
+    assert "Ningún candidato" in logged_text
+    assert "3.0" in logged_text
+
+
+def test_log_near_miss_summary_reports_best_candidate_and_below_count():
+    """Con candidatos evaluados, el resumen debe reportar cuántos quedaron por
+    debajo del mínimo y cuál fue el mejor EV real encontrado — esto es
+    precisamente lo que faltaba para decidir el próximo ajuste de filtros
+    con datos reales en vez de adivinar (ver NearMiss en value_finder.py)."""
+    near_misses = [
+        NearMiss(
+            event_label="Millonarios vs Nacional",
+            market_key="h2h",
+            selection="home",
+            bookmaker="Betplay",
+            offered_odds=2.30,
+            ev_pct=1.8,
+        ),
+        NearMiss(
+            event_label="Junior vs Tolima",
+            market_key="h2h",
+            selection="away",
+            bookmaker="Betplay",
+            offered_odds=4.10,
+            ev_pct=2.6,  # el mejor EV real de la corrida, pero aún bajo el mínimo
+        ),
+        NearMiss(
+            event_label="America vs Cali",
+            market_key="totals",
+            selection="Over 2.5",
+            bookmaker="Betplay",
+            offered_odds=1.90,
+            ev_pct=-4.0,
+        ),
+    ]
+
+    with patch("valuebet.daily.logger") as mock_logger:
+        _log_near_miss_summary(near_misses, min_ev_pct=3.0)
+
+    assert mock_logger.info.call_count == 1
+    logged_text = " ".join(str(call) for call in mock_logger.info.call_args_list)
+    assert "3" in logged_text  # 3 candidatos evaluados
+    assert "Junior vs Tolima" in logged_text  # el mejor EV real
+    assert "2.60" in logged_text or "2.6" in logged_text
+
+
+def test_generate_daily_picks_logs_near_miss_summary_when_zero_picks():
+    """Prueba de integración: con un min_ev_pct imposible de alcanzar,
+    generate_daily_picks debe devolver 0 picks PERO el log de near-misses debe
+    reflejar que sí hubo un candidato real evaluado (con su EV real), en vez
+    de dejar la corrida en un silencio total como pasaba antes de este cambio."""
+    with tempfile.TemporaryDirectory() as tmp:
+        storage = Storage(str(Path(tmp) / "t.db"))
+        cfg = AppConfig(
+            bankroll=BankrollLimits(total=1_000_000),
+            odds_provider=OddsProviderConfig(
+                name="odds_api_io",
+                api_key="x",
+                base_url="https://x",
+                target_bookmakers=["Betplay"],
+                reference_bookmakers=["Pinnacle"],
+                sports=["football"],
+            ),
+            value_detection=ValueDetectionConfig(min_ev_pct=999.0),  # imposible
+            daily=DailyConfig(num_picks=10, max_picks_per_event=1),
+            telegram=None,
+            db_path="",
+            output_dir="output",
+            log_level="INFO",
+            log_file=None,
+        )
+        provider = _FakeProviderWithValueBet()
+
+        with patch("valuebet.daily.logger") as mock_logger:
+            picks = generate_daily_picks(cfg, provider, storage)
+
+        assert picks == []
+        logged_text = " ".join(str(call) for call in mock_logger.info.call_args_list)
+        # El evento real del fixture (home @ 2.30 en Betplay) debe aparecer en
+        # el resumen de near-misses, con su cuota real.
+        assert "Millonarios" in logged_text
+        assert "2.3" in logged_text  # cuota real del fixture (2.30), sin formatear por el mock

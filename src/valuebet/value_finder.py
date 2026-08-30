@@ -6,6 +6,7 @@ para que una persona decida y las ejecute manualmente.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import List, Optional
 
 from .devig import expected_value_pct, fair_probabilities
@@ -14,6 +15,30 @@ from .models import Event, ValueBet
 from .settlement import parse_point_suffix
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class NearMiss:
+    """Un candidato que pasó los filtros de cuota (min_odds/max_odds,
+    max_totals_point) y se pudo devigar/calcular su EV real, pero NO llegó a
+    `min_ev_pct` — o sí llegó, da igual: esto registra el EV real de
+    cualquier candidato evaluable, se convierta o no en ValueBet.
+
+    Se agregó (2026-08-29) porque `ev_pct < min_ev_pct: continue` descartaba
+    en completo silencio — sin este registro, un día en 0 picks no permite
+    distinguir "los candidatos en rango rozaron el mínimo" de "ninguno se
+    acercó ni remotamente", así que cualquier ajuste de min_odds/max_odds/
+    min_ev_pct se hacía a ciegas. Nunca se usa para decidir un pick ni se le
+    muestra al usuario — es solo observabilidad para guiar el próximo ajuste
+    de filtros con datos reales en vez de adivinar (ver README, "Rango de
+    cuota")."""
+
+    event_label: str
+    market_key: str
+    selection: str
+    bookmaker: str
+    offered_odds: float
+    ev_pct: float
 
 
 def _reference_prices(event: Event, reference_bookmakers: List[str], market_key: str, outcome_name: str) -> List[float]:
@@ -42,6 +67,7 @@ def find_value_bets_in_event(
     max_totals_point: Optional[float] = None,
     min_odds: Optional[float] = None,
     max_odds: Optional[float] = None,
+    near_misses: Optional[List[NearMiss]] = None,
 ) -> List[ValueBet]:
     results: List[ValueBet] = []
 
@@ -140,6 +166,22 @@ def find_value_bets_in_event(
                 except ValueError:
                     continue
 
+                if near_misses is not None:
+                    # Se registra ANTES del corte de min_ev_pct a propósito —
+                    # ver NearMiss arriba: esto es lo único que permite saber
+                    # qué tan cerca (o lejos) estuvo el mejor candidato real
+                    # del umbral exigido, en vez de solo saber "0 picks".
+                    near_misses.append(
+                        NearMiss(
+                            event_label=event.label(),
+                            market_key=market_key,
+                            selection=outcome.name,
+                            bookmaker=target_bk,
+                            offered_odds=outcome.price_decimal,
+                            ev_pct=ev_pct,
+                        )
+                    )
+
                 if ev_pct < min_ev_pct:
                     continue
 
@@ -205,6 +247,7 @@ def find_value_bets(
     max_totals_point: Optional[float] = None,
     min_odds: Optional[float] = None,
     max_odds: Optional[float] = None,
+    near_misses: Optional[List[NearMiss]] = None,
 ) -> List[ValueBet]:
     all_results: List[ValueBet] = []
     for event in events:
@@ -224,6 +267,7 @@ def find_value_bets(
                 max_totals_point,
                 min_odds,
                 max_odds,
+                near_misses,
             )
         )
     all_results.sort(key=lambda vb: vb.ev_pct, reverse=True)
