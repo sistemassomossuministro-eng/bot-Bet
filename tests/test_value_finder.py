@@ -5,8 +5,38 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from valuebet.kelly import BankrollLimits
-from valuebet.models import BookmakerMarket, Event, Outcome
-from valuebet.value_finder import NearMiss, find_value_bets, find_value_bets_in_event
+from valuebet.models import BookmakerMarket, Event, Outcome, ValueBet
+from valuebet.value_finder import (
+    NearMiss,
+    collapse_correlated_totals,
+    find_value_bets,
+    find_value_bets_in_event,
+)
+
+
+def make_vb_for_collapse(event_id, market_key, selection, ev_pct) -> ValueBet:
+    """Helper mínimo para probar collapse_correlated_totals sin pasar por
+    todo el pipeline de devig — solo importan event_id, market_key,
+    selection y ev_pct para esta lógica."""
+    event = Event(
+        event_id=event_id,
+        sport="football",
+        league="Primera A",
+        home_team="Local",
+        away_team="Visita",
+        commence_time=datetime.utcnow() + timedelta(hours=3),
+        bookmakers={},
+    )
+    return ValueBet(
+        event=event,
+        market_key=market_key,
+        selection=selection,
+        bookmaker="Betplay",
+        offered_odds=2.10,
+        fair_probability=0.5,
+        ev_pct=ev_pct,
+        reference_bookmakers=["Pinnacle"],
+    )
 
 
 def make_event() -> Event:
@@ -485,3 +515,85 @@ def test_find_value_bets_threads_near_misses_across_events():
 
     assert results == []
     assert len(near_misses) == 3
+
+
+def test_collapse_correlated_totals_keeps_least_extreme_over():
+    """Caso real reportado por el usuario (2026-09-05): el mismo partido con
+    'más de 3.75', 'más de 4', 'más de 4.25' y 'más de 4.5' goles, todas con
+    EV positivo. En la práctica es la misma apuesta a distintos umbrales —
+    debe quedar solo la menos extrema (el umbral más bajo, over_3.75)."""
+    candidates = [
+        make_vb_for_collapse("evt1", "totals", "over_3.75", ev_pct=5.0),
+        make_vb_for_collapse("evt1", "totals", "over_4", ev_pct=8.0),  # mayor EV, pero más extrema
+        make_vb_for_collapse("evt1", "totals", "over_4.25", ev_pct=6.0),
+        make_vb_for_collapse("evt1", "totals", "over_4.5", ev_pct=7.0),
+    ]
+
+    result = collapse_correlated_totals(candidates)
+
+    assert len(result) == 1
+    assert result[0].selection == "over_3.75"
+
+
+def test_collapse_correlated_totals_keeps_least_extreme_under():
+    """Simétrico al caso 'over': para 'under', la menos extrema es el
+    umbral MÁS ALTO (under_4.5 es mucho más fácil de cumplir que under_0.5)."""
+    candidates = [
+        make_vb_for_collapse("evt1", "totals", "under_0.5", ev_pct=5.0),
+        make_vb_for_collapse("evt1", "totals", "under_1.5", ev_pct=5.0),
+        make_vb_for_collapse("evt1", "totals", "under_4.5", ev_pct=5.0),
+    ]
+
+    result = collapse_correlated_totals(candidates)
+
+    assert len(result) == 1
+    assert result[0].selection == "under_4.5"
+
+
+def test_collapse_correlated_totals_keeps_other_markets_and_opposite_side():
+    """No debe tocar mercados distintos de 'totals' (h2h, btts) ni el lado
+    contrario de totals (over vs. under) — son apuestas genuinamente
+    distintas y ambas deben sobrevivir si tienen valor. Caso real: el mismo
+    partido con 4 líneas de 'over' correlacionadas + 1 pick de 'ambos
+    anotan' (btts) — solo las 4 de over deben colapsar a 1."""
+    candidates = [
+        make_vb_for_collapse("evt1", "totals", "over_3.75", ev_pct=5.0),
+        make_vb_for_collapse("evt1", "totals", "over_4", ev_pct=8.0),
+        make_vb_for_collapse("evt1", "totals", "under_1.5", ev_pct=4.0),
+        make_vb_for_collapse("evt1", "btts", "yes", ev_pct=3.5),
+        make_vb_for_collapse("evt1", "h2h", "home", ev_pct=3.2),
+    ]
+
+    result = collapse_correlated_totals(candidates)
+    selections = {(vb.market_key, vb.selection) for vb in result}
+
+    assert selections == {
+        ("totals", "over_3.75"),
+        ("totals", "under_1.5"),
+        ("btts", "yes"),
+        ("h2h", "home"),
+    }
+
+
+def test_collapse_correlated_totals_does_not_merge_different_events():
+    """Dos partidos distintos, cada uno con dos líneas de 'over' — no deben
+    mezclarse entre sí, cada partido colapsa por separado."""
+    candidates = [
+        make_vb_for_collapse("evt1", "totals", "over_3.5", ev_pct=5.0),
+        make_vb_for_collapse("evt1", "totals", "over_4.5", ev_pct=5.0),
+        make_vb_for_collapse("evt2", "totals", "over_2.5", ev_pct=5.0),
+        make_vb_for_collapse("evt2", "totals", "over_3.5", ev_pct=5.0),
+    ]
+
+    result = collapse_correlated_totals(candidates)
+    by_event = {(vb.event.event_id, vb.selection) for vb in result}
+
+    assert by_event == {("evt1", "over_3.5"), ("evt2", "over_2.5")}
+
+
+def test_collapse_correlated_totals_single_entry_passes_through():
+    """Una sola línea de 'totals' por lado/partido no debe verse afectada."""
+    candidates = [make_vb_for_collapse("evt1", "totals", "over_2.5", ev_pct=4.0)]
+    result = collapse_correlated_totals(candidates)
+    assert len(result) == 1
+    assert result[0].selection == "over_2.5"

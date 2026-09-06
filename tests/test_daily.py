@@ -500,3 +500,106 @@ def test_generate_daily_picks_logs_near_miss_summary_when_zero_picks():
         # el resumen de near-misses, con su cuota real.
         assert "Millonarios" in logged_text
         assert "2.3" in logged_text  # cuota real del fixture (2.30), sin formatear por el mock
+
+
+class _FakeProviderWithCorrelatedTotals:
+    """Reproduce el caso real reportado por el usuario (2026-09-05): un solo
+    partido donde 4 líneas de 'más de N goles' (3.75/4/4.25/4.5) Y 'ambos
+    anotan' tienen EV positivo real. Sin collapse_correlated_totals, el
+    resumen diario terminaba con 5 picks del mismo partido — 4 de ellos
+    literalmente la misma apuesta (el total de goles) a distintos umbrales,
+    que ganan o pierden todas juntas según el marcador final."""
+
+    def __init__(self):
+        totals_points = [3.75, 4.0, 4.25, 4.5]
+        pinnacle_totals = [
+            BookmakerMarket(
+                bookmaker="Pinnacle",
+                market_key="totals",
+                updated_at=None,
+                outcomes=[Outcome(f"over_{p}", 1.95), Outcome(f"under_{p}", 1.95)],
+            )
+            for p in totals_points
+        ]
+        betplay_totals = [
+            # Cuota inflada en 'over' respecto a la referencia -> EV positivo
+            # en las 4 líneas, igual que en el caso real reportado.
+            BookmakerMarket(
+                bookmaker="Betplay",
+                market_key="totals",
+                updated_at=None,
+                outcomes=[Outcome(f"over_{p}", 2.30), Outcome(f"under_{p}", 1.75)],
+            )
+            for p in totals_points
+        ]
+        pinnacle_btts = BookmakerMarket(
+            bookmaker="Pinnacle",
+            market_key="btts",
+            updated_at=None,
+            outcomes=[Outcome("yes", 1.90), Outcome("no", 1.90)],
+        )
+        betplay_btts = BookmakerMarket(
+            bookmaker="Betplay",
+            market_key="btts",
+            updated_at=None,
+            outcomes=[Outcome("yes", 2.20), Outcome("no", 1.70)],
+        )
+        self._event = Event(
+            event_id="correlated1",
+            sport="football",
+            league="England - Premier League",
+            home_team="Manchester City",
+            away_team="Coventry City",
+            commence_time=datetime.utcnow() + timedelta(hours=5),
+            bookmakers={
+                "Pinnacle": pinnacle_totals + [pinnacle_btts],
+                "Betplay": betplay_totals + [betplay_btts],
+            },
+        )
+
+    def list_events(self, sport, leagues=None, lookahead_days=3, limit=None):
+        return [self._event]
+
+    def get_events_odds(self, event_ids, bookmakers):
+        return [self._event for _ in event_ids]
+
+    def get_event_result(self, event_id):
+        raise NotImplementedError
+
+
+def test_generate_daily_picks_collapses_correlated_totals_lines():
+    """El caso real de la conversación (2026-09-05): sin este filtro, un solo
+    partido con 4 líneas de 'más de N goles' correlacionadas + 1 de 'ambos
+    anotan' ocuparía 5 de los cupos del día. Con collapse_correlated_totals
+    aplicado en generate_daily_picks, deben quedar solo 2: la línea de
+    totals MENOS extrema (over_3.75, el umbral más bajo) y el pick de btts,
+    que es un mercado genuinamente distinto y debe mantenerse."""
+    with tempfile.TemporaryDirectory() as tmp:
+        storage = Storage(str(Path(tmp) / "t.db"))
+        cfg = AppConfig(
+            bankroll=BankrollLimits(total=1_000_000),
+            odds_provider=OddsProviderConfig(
+                name="odds_api_io",
+                api_key="x",
+                base_url="https://x",
+                target_bookmakers=["Betplay"],
+                reference_bookmakers=["Pinnacle"],
+                sports=["football"],
+            ),
+            value_detection=ValueDetectionConfig(
+                min_ev_pct=1.0, allowed_markets=["h2h", "totals", "btts"]
+            ),
+            daily=DailyConfig(num_picks=10, max_picks_per_event=1),
+            telegram=None,
+            db_path="",
+            output_dir="output",
+            log_level="INFO",
+            log_file=None,
+        )
+        provider = _FakeProviderWithCorrelatedTotals()
+
+        picks = generate_daily_picks(cfg, provider, storage)
+
+        assert len(picks) == 2
+        by_market = {(p.market_key, p.selection) for p in picks}
+        assert by_market == {("totals", "over_3.75"), ("btts", "yes")}

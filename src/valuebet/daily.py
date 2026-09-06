@@ -17,7 +17,7 @@ from .odds_provider import OddsProvider
 from .secondary_signals import enrich_picks_with_secondary_signals
 from .settlement import settle_selection
 from .storage.db import Storage
-from .value_finder import NearMiss, find_value_bets
+from .value_finder import NearMiss, collapse_correlated_totals, find_value_bets
 
 logger = logging.getLogger(__name__)
 
@@ -209,6 +209,22 @@ def generate_daily_picks(
         # ejecutadas automáticamente una tras otra.
     )
     _log_near_miss_summary(near_misses, cfg.value_detection.min_ev_pct)
+
+    # Varias líneas de 'totals' del mismo lado (over/under) en el mismo
+    # partido son, en la práctica, la misma apuesta a distintos umbrales —
+    # ver collapse_correlated_totals en value_finder.py. Se aplica ANTES del
+    # dedupe entre corridas de abajo (ese es por evento+fecha, este es
+    # dentro de una sola corrida) y antes de select_daily_picks, para que el
+    # top N no se llene con lo que en la práctica es una sola posición.
+    before_collapse = len(candidates)
+    candidates = collapse_correlated_totals(candidates)
+    collapsed = before_collapse - len(candidates)
+    if collapsed:
+        logger.info(
+            "%d candidato(s) de 'totals' descartados por ser líneas más extremas que otra del mismo "
+            "partido y lado ya elegida (ver detalle arriba)",
+            collapsed,
+        )
 
     # Con daily.lookahead_days > 1, un mismo partido lejano puede seguir
     # cumpliendo las reglas de valor varias corridas seguidas antes de

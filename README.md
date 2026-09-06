@@ -398,6 +398,35 @@ más arriba) va a haber, cualquier día, muchos más partidos candidatos que con
 solo Colombia — así que el "top 10" es una selección real entre un universo
 grande, no casi todo lo disponible.
 
+### Líneas de "totals" correlacionadas: solo una por partido y lado
+
+**Caso real reportado por el usuario (2026-09-05)**: un día con pocos
+partidos candidatos, el resumen diario terminó con 5 picks del mismo
+partido (Manchester City vs Coventry City): 4 líneas de "más de N goles"
+(3.75, 4, 4.25 y 4.5) más 1 de "ambos anotan". El partido terminó 1-0, así
+que las 4 líneas de totals perdieron juntas — no es casualidad: "más de
+3.75", "más de 4", "más de 4.25" y "más de 4.5" goles dependen del MISMO
+marcador final, así que ganan o pierden casi siempre juntas. En la
+práctica, un apostador solo tomaría una de esas 4 líneas, no las cuatro —
+tomarlas todas no diversifica nada, solo hace parecer que hay más picks de
+los que realmente hay.
+
+`value_finder.py::collapse_correlated_totals` corrige esto: cuando el motor
+encuentra valor en más de una línea de `totals` del mismo lado (over u
+under) en el mismo partido, se queda solo con la **menos extrema** — el
+umbral más fácil de cumplir (el `over` más bajo, o el `under` más alto) — y
+descarta el resto, con un log INFO explicando cuál se quedó y cuáles se
+descartaron. Se aplica en `generate_daily_picks`, sobre los candidatos que
+ya pasaron el filtro de EV mínimo, ANTES de `select_daily_picks` — así el
+"top N" no se llena con lo que en la práctica es una sola posición.
+
+**Lo que NO se toca**: el lado contrario de `totals` (over vs. under) y
+cualquier otro mercado del mismo partido (h2h, btts) son apuestas
+genuinamente distintas — no están tan correlacionadas con el total de
+goles como para tratarlas igual, así que se mantienen todas si tienen
+valor. En el caso real de arriba, el resultado correcto queda en 2 picks:
+la línea de totals menos extrema (más de 3.75) + "ambos anotan".
+
 ## Cómo funciona el ciclo diario
 
 Cada mañana, un solo job (`valuebet.daily_job`) hace esto en orden:

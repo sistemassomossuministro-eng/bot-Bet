@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from .devig import expected_value_pct, fair_probabilities
 from .kelly import BankrollLimits, suggest_stake
@@ -272,3 +272,70 @@ def find_value_bets(
         )
     all_results.sort(key=lambda vb: vb.ev_pct, reverse=True)
     return all_results
+
+
+def collapse_correlated_totals(value_bets: List[ValueBet]) -> List[ValueBet]:
+    """Dentro de un mismo partido, varias líneas de 'totals' del mismo lado
+    (por ejemplo "más de 4", "más de 4.25" y "más de 4.5" goles) son en la
+    práctica LA MISMA apuesta a distintos umbrales — resultan del mismo
+    marcador final, así que ganan o pierden todas juntas casi siempre. Un
+    apostador real solo tomaría una de ellas, no las cuatro.
+
+    Caso real reportado por el usuario (2026-09-05): un día con pocos
+    partidos candidatos, el resumen diario terminó con 4 picks de "más de N
+    goles" del mismo partido (3.75/4/4.25/4.5) más 1 de "ambos anotan" — el
+    partido terminó 1-0, así que las 4 líneas de totals perdieron juntas,
+    ocupando 4 de los 5 cupos del día con lo que en la práctica era una sola
+    posición. Se agregó este filtro para que, cuando el motor encuentre
+    valor en más de una línea del mismo lado (over u under) del mismo
+    partido, se quede solo con la MENOS EXTREMA — el umbral más fácil de
+    cumplir: el 'over' más bajo o el 'under' más alto — y descarte el resto.
+
+    Otros mercados del mismo partido (h2h, btts) y el lado contrario de
+    totals (over vs. under) NO se tocan — son apuestas genuinamente
+    distintas y se mantienen todas si tienen valor.
+
+    Se aplica sobre la lista ya filtrada por EV mínimo (después de
+    `find_value_bets`), nunca sobre `near_misses` — el log de near-misses
+    debe seguir mostrando TODO lo evaluado, sin este recorte."""
+    groups: Dict[Tuple[str, str], List[ValueBet]] = {}
+    passthrough: List[ValueBet] = []
+
+    for vb in value_bets:
+        if vb.market_key != "totals":
+            passthrough.append(vb)
+            continue
+        side, point = parse_point_suffix(vb.selection)
+        if point is None or side not in ("over", "under"):
+            # Forma de selección inesperada para 'totals' — no se sabe cómo
+            # compararla contra otras líneas, así que se deja pasar tal cual
+            # en vez de arriesgarse a descartar algo por error.
+            passthrough.append(vb)
+            continue
+        groups.setdefault((vb.event.event_id, side), []).append(vb)
+
+    collapsed: List[ValueBet] = list(passthrough)
+    for (_event_id, side), entries in groups.items():
+        if len(entries) == 1:
+            collapsed.append(entries[0])
+            continue
+
+        entries_with_point = [(parse_point_suffix(vb.selection)[1], vb) for vb in entries]
+        if side == "over":
+            chosen = min(entries_with_point, key=lambda pe: pe[0])[1]
+        else:  # "under"
+            chosen = max(entries_with_point, key=lambda pe: pe[0])[1]
+
+        collapsed.append(chosen)
+        for _point, vb in entries_with_point:
+            if vb is not chosen:
+                logger.info(
+                    "Descartada por ser más extrema que otra línea de 'totals' ya elegida en el "
+                    "mismo partido y lado (se queda %s, se descarta %s): %s",
+                    chosen.selection,
+                    vb.selection,
+                    vb.event.label(),
+                )
+
+    collapsed.sort(key=lambda vb: vb.ev_pct, reverse=True)
+    return collapsed
