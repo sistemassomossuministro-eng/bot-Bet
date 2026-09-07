@@ -1,0 +1,342 @@
+# Copia este archivo a config.yaml y completa tus datos reales para correr en local.
+# config.yaml NUNCA se commitea — está en .gitignore a propósito. En GitHub
+# Actions el workflow lo genera solo, copiando este mismo config.example.yaml
+# (ver .github/workflows/daily.yml, paso "Preparar config.yaml"), y las claves
+# reales (api_key/bot_token/chat_id) llegan como variables de entorno desde los
+# Secrets del repo (ODDS_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID), nunca
+# desde el yaml. Si alguna vez ves un config.yaml trackeado en `git status`,
+# es un error — sácalo del repo (no lo necesita, y puede causar conflictos de
+# fusión como el que motivó esta nota).
+#
+# Deportes/ligas: ver 'sports'/'leagues'/'leagues_by_sport' más abajo.
+
+bankroll:
+  total: 1000000              # banca total en COP (o la moneda que uses)
+  currency: COP
+  kelly_fraction: 0.25        # Kelly fraccional (25%) — más conservador que Kelly completo
+  max_stake_pct: 0.02         # tope: máximo 2% de la banca por apuesta individual
+  daily_stake_limit_pct: 0.10 # tope: máximo 10% de la banca arriesgada en un mismo día
+  daily_loss_limit_pct: 0.05  # freno: si se pierde más del 5% de la banca en el día, se pausan las alertas
+
+odds_provider:
+  # Proveedor de SOLO LECTURA de cuotas públicas (no coloca apuestas).
+  name: odds_api_io
+  api_key: "TU_API_KEY_AQUI"          # https://odds-api.io
+  base_url: "https://api.odds-api.io/v3"
+  target_bookmakers: ["Betplay"]   # casas colombianas cuyas cuotas se evalúan — Wplay NO está cubierta por
+                                    # odds-api.io a la fecha (confirmado con GET /bookmakers); si algún día
+                                    # aparece ahí, agrégala. Verifica siempre los nombres exactos con
+                                    # GET https://api.odds-api.io/v3/bookmakers?apiKey=TU_KEY antes de sumar una casa.
+  reference_bookmakers: ["Bet365"]  # libro de referencia para estimar la probabilidad "justa" (devig).
+                                     # Pinnacle (el libro "sharp" que este proyecto usaba originalmente como
+                                     # referencia) NO está en el catálogo de odds-api.io — confirmado con
+                                     # GET /bookmakers, no es un tema de nombre ni de plan. Bet365 es el
+                                     # sustituto: no es un libro "sharp" en sentido estricto, pero es de los
+                                     # más líquidos/eficientes entre los que sí cubre el proveedor, así que es
+                                     # la mejor referencia disponible en el nivel gratuito. Ver el README
+                                     # ("Sobre el libro de referencia") para el detalle de esta decisión.
+                                     # El plan gratuito de odds-api.io permite solo 2 bookmakers propios en
+                                     # total (target + reference) — Betplay + Bet365 ocupan ambos cupos.
+  sports: ["football", "basketball"]        # slugs de deporte, ver GET /sports (con tu key:
+                                             # https://api.odds-api.io/v3/sports?apiKey=TU_KEY).
+                                             # "basketball" trae TODAS las ligas de basketball del
+                                             # mundo (NBA, NCAA, WNBA, ligas menores...) salvo que
+                                             # se restrinja con leagues_by_sport, ver abajo.
+  leagues: []                               # filtro de ligas por defecto, para cualquier deporte que
+                                             # NO tenga su propia entrada en leagues_by_sport. [] = TODAS
+                                             # las ligas de ese deporte en el mundo (no solo Colombia).
+  leagues_by_sport:                         # opcional: restringe un deporte puntual sin afectar a los
+                                             # demás. Sin esto, "basketball" en 'sports' traería TODAS
+                                             # sus ligas (NCAA universitario, WNBA, ligas menores...),
+                                             # no solo la NBA — usar 'leagues' (la lista de arriba) para
+                                             # eso rompería fútbol, porque es la MISMA lista para
+                                             # cualquier deporte que no esté aquí.
+    basketball: ["usa-nba"]                 # slug confirmado con GET /leagues?sport=basketball — deja
+                                             # [] o quita esta línea para traer todas las ligas de
+                                             # basketball. La NBA juega de octubre a junio: en temporada
+                                             # baja (verano boreal) es normal que no aparezcan picks de
+                                             # este deporte, no es un error.
+    football:                               # filtro curado (agosto 2026, ampliado sep-2026) — antes traía
+                                             # TODAS las ligas de fútbol del mundo (cientos, muchas de
+                                             # segunda/tercera división o infantiles con cuotas poco
+                                             # fiables). Todos los slugs de abajo se verificaron contra una
+                                             # respuesta real de GET /leagues?sport=football (nunca
+                                             # adivinados) — ver el README, "Alcance", para el detalle
+                                             # completo y las advertencias de mantenimiento marcadas ⚠️.
+                                             # Desde sep-2026 hay un chequeo AUTOMÁTICO semanal de estos
+                                             # slugs (weekly_league_slug_check.yml ->
+                                             # scripts/check_league_slugs.py): si la API le cambia el
+                                             # sufijo de fase a alguno (ej. Apertura -> Clausura, o se lo
+                                             # quita como pasó con la UEFA), y hay un único reemplazo obvio,
+                                             # este bloque se actualiza SOLO (verás un comentario
+                                             # "🤖 auto-actualizado <fecha>" arriba de la línea que cambió).
+                                             # Si el caso es ambiguo, no se toca nada y llega un aviso por
+                                             # Telegram para revisión manual — nunca se adivina un slug.
+      - "colombia-liga-dimayor-finalizacion"   # Colombia — Categoría Primera A (Liga BetPlay Dimayor).
+                                                # OJO: existe también "colombia-torneo-dimayor-clausura"
+                                                # en la respuesta de la API — es la Primera B (segunda
+                                                # división, "Torneo BetPlay Dimayor"), NO la Primera A.
+                                                # Confirmado por nomenclatura oficial de DIMAYOR (Liga =
+                                                # Primera A, Torneo = Primera B) — a propósito NO se
+                                                # incluye acá.
+      - "argentina-primera-lpf-clausura"        # ⚠️ Argentina — Primera División (Liga Profesional de
+                                                 # Fútbol). Se juega en dos mitades por año, Apertura y
+                                                 # Clausura, y la API parece exponer un slug distinto para
+                                                 # cada una (confirmado de nuevo en sep-2026: sigue siendo
+                                                 # "Clausura" el único con partidos). Cuando termine el
+                                                 # Clausura y arranque el próximo Apertura, este slug puede
+                                                 # dejar de traer partidos — revisa con
+                                                 # GET /leagues?sport=football y agrega/actualiza el slug
+                                                 # vigente si el pick de Argentina desaparece por varios
+                                                 # días seguidos.
+      - "brazil-brasileiro-serie-a"              # Brasil — Brasileirão Serie A. Temporada única (sin
+                                                  # split Apertura/Clausura), no debería tener este riesgo.
+      - "usa-mls"                                 # USA — MLS. A propósito NO se incluye la USL
+                                                    # Championship (el primer pick real de este proyecto
+                                                    # fue justamente un partido de USL) — decisión explícita
+                                                    # del usuario de acotar a solo MLS.
+      - "mexico-liga-mx-apertura"                 # ⚠️ México — Liga MX. Mismo riesgo que Argentina: se
+                                                    # juega en Apertura/Clausura y la API parece nombrar el
+                                                    # slug por mitad de temporada (confirmado de nuevo en
+                                                    # sep-2026: sigue siendo "Apertura" el único con
+                                                    # partidos). Revisa y actualiza cuando cambie de mitad.
+      - "england-premier-league"                  # Big 5 europeas — temporada única (agosto-mayo), sin
+      - "spain-laliga"                             # el riesgo de Apertura/Clausura de arriba.
+      - "italy-serie-a"
+      - "germany-bundesliga"
+      - "france-ligue-1"
+      - "netherlands-eredivisie"                  # Ampliación sep-2026 (a pedido del usuario, "más ligas
+      - "portugal-liga-portugal"                  # para más opciones de picks"): más ligas top europeas de
+      - "turkiye-super-lig"                       # buena liquidez, mismo criterio que Big 5 — temporada
+                                                   # única, sin riesgo de Apertura/Clausura. OJO con Portugal:
+                                                   # el slug real es "portugal-liga-portugal" (Liga Portugal,
+                                                   # antes "Primeira Liga") — NO "portugal-primeira-liga",
+                                                   # que no existe en la API; verificado contra la respuesta
+                                                   # real, no adivinado.
+      - "saudi-arabia-saudi-professional-league"  # Arabia Saudita — liga de creciente inversión/liquidez
+                                                   # (Ronaldo, Al-Nassr, etc.), temporada única.
+      - "international-clubs-uefa-champions-league"   # 🐛 CORREGIDO (sep-2026): estos 3 slugs tenían el
+      - "international-clubs-uefa-europa-league"      # sufijo "-playoff-round" desde agosto (cuando la fase
+      - "international-clubs-uefa-conference-league"  # vigente al verificar era esa) — el riesgo que ya
+                                                        # estaba documentado aquí se concretó: al pasar el
+                                                        # torneo a la fase de liga, la API le puso un slug
+                                                        # SIN sufijo de fase y el viejo ("...-playoff-round")
+                                                        # dejó de existir. Verificado de nuevo contra
+                                                        # GET /leagues?sport=football (sep-2026): el slug
+                                                        # actual estable es sin sufijo de fase. Si vuelve a
+                                                        # aparecer un sufijo de fase en el futuro (ronda de
+                                                        # eliminación, etc.), repetir esta verificación.
+      - "international-clubs-conmebol-libertadores-knockout-stage"  # ⚠️ Mismo riesgo que arriba para
+      - "international-clubs-conmebol-sudamericana-knockout-stage"  # Libertadores/Sudamericana — re-verificado
+                                                                      # en sep-2026, TODAVÍA con el sufijo
+                                                                      # "Knockout stage" (no cambió esta vez).
+      - "chile-primera-division"                  # Ampliación sep-2026: más ligas top de Sudamérica, mismo
+      - "ecuador-serie-a"                          # criterio que Argentina/Brasil/Colombia ya cubiertos.
+      - "bolivia-division-profesional"             # Chile y Bolivia no muestran nomenclatura Apertura/
+                                                    # Clausura en la API (temporada única aparente) — sin el
+                                                    # riesgo de arriba. Ecuador sí tiene poco volumen en el
+                                                    # snapshot (11 eventos) — vigilar si trae picks reales o
+                                                    # si es una liga con baja cobertura del proveedor.
+      - "paraguay-division-de-honor-clausura"     # ⚠️ Paraguay, Perú, Uruguay y Venezuela SÍ muestran sufijo
+      - "peru-primera-division-clausura"           # "Clausura" en el slug — mismo riesgo de Argentina/México:
+      - "uruguay-primera-division-clausura"        # probablemente cambie a "Apertura" (o desaparezca) cuando
+      - "venezuela-primera-division-clausura"      # termine la mitad de temporada vigente. Revisa con
+                                                    # GET /leagues?sport=football si algún pick de estos 4
+                                                    # países desaparece por varios días seguidos. Uruguay y
+                                                    # Bolivia mostraban muy pocos eventos en el snapshot (10 y
+                                                    # 16 respectivamente) — puede ser solo el momento de la
+                                                    # temporada, vigilar igual que Ecuador.
+  poll_interval_seconds: 120
+  lookahead_days: 3
+  bookmaker_links: {}            # opcional: {"Betplay": "https://tu-url-verificada.../"} para que cada
+                                  # pick del mensaje de Telegram traiga un link de un tap a la casa.
+                                  # DEJAR VACÍO por defecto a propósito — NO pegues acá el primer resultado
+                                  # de un buscador. El sector de apuestas está lleno de sitios "clon" o de
+                                  # afiliados que imitan el nombre de la casa real (lo confirmamos buscando
+                                  # "Betplay Colombia": ningún resultado en la primera página era el dominio
+                                  # oficial). Copia la URL directamente de tu sesión ya iniciada en la app/
+                                  # web real de tu casa, nunca de un resultado de búsqueda ni de un link que
+                                  # alguien te mande.
+
+value_detection:
+  devig_method: multiplicative   # multiplicative | shin
+  min_ev_pct: 3.0                # EV mínimo (%) para generar una alerta
+  min_reference_books: 1         # mínimo de libros de referencia requeridos para confiar en la cuota
+  allowed_markets: ["h2h", "totals", "btts"]  # mercados habilitados: "h2h" (1X2), "totals" (total de
+                                  # goles/"más-menos"), "btts" (ambos anotan), "spreads" (hándicap).
+                                  # "totals" se sumó tras arreglar la causa raíz real: el código buscaba
+                                  # un campo 'point' que la API JAMÁS envía — el campo real se llama
+                                  # 'hdp' (confirmado contra la documentación oficial de odds-api.io), así
+                                  # que TODA línea de totals se descartaba siempre, no solo las incompletas. Con
+                                  # el campo correcto ('hdp'), la protección contra el cruce de líneas de gol
+                                  # distintas (que causó el bug de EV +700%) sigue activa exactamente igual — ver
+                                  # README, "Mercados soportados". "btts" (ambos anotan / "Both Teams To
+                                  # Score") se confirmó vía GET /markets?sport=football — existe, sin línea
+                                  # (proposición fija sí/no), así que no le aplica el riesgo de cruce de
+                                  # líneas de totals/spreads. "spreads" (hándicap) no se activó por
+                                  # defecto porque no se pidió explícitamente, pero el mismo arreglo aplica —
+                                  # puedes sumarlo si lo necesitas. Igual, revisa el log las primeras corridas
+                                  # por si aparece "se descarta para no cruzar resultados de líneas distintas".
+  max_ev_pct: 50.0                # red de seguridad: un EV por encima de esto casi nunca es valor real —
+                                   # se descarta y se deja registro en el log en vez de mostrarse como pick.
+  max_totals_point: 5.5           # otra red de seguridad, distinta a la anterior: descarta líneas de
+                                   # "totals" con un punto por encima de este valor (ej. "más de 8.5 goles").
+                                   # No es un bug de cruce de líneas — el cálculo de EV en una línea así SÍ
+                                   # puede ser correcto — pero hasta un libro de referencia "sharp" (Bet365)
+                                   # dedica menos cuidado a líneas tan extremas/poco apostadas que a la
+                                   # línea principal (2.5), así que confiar en esa cuota como "justa" es más
+                                   # riesgoso. Pon `null` para desactivar este tope si quieres ver esas líneas.
+  min_odds: 1.40                  # filtro general de rango de CUOTA ofrecida (target_bookmakers), aplica
+  max_odds: 4.00                  # a TODOS los mercados habilitados (h2h, totals, btts...), no solo
+                                   # totals. Mismo problema de fondo que max_totals_point pero más
+                                   # amplio: un resultado poco probable es más difícil de calibrar bien —
+                                   # un error chico en la probabilidad estimada se magnifica mucho más en
+                                   # una cuota alta que cerca de evens (ver el README, "Rango de cuota",
+                                   # para el detalle con ejemplos numéricos).
+                                   # AJUSTE REAL, en 2 pasos: el tope original de 3.00 dejó al bot en
+                                   # 0 picks/día 3 días seguidos con las 15 ligas curadas — revisando los
+                                   # logs, era por lejos el filtro más disparado (la mayoría de las cuotas
+                                   # descartadas estaban muy por encima, no rozando el límite). Se subió a
+                                   # 3.50 el 2026-08-26 (junto con `daily.lookahead_days`, ver abajo), pero
+                                   # el bot siguió en 0 picks, así que se subió otro escalón a 4.00 el
+                                   # 2026-08-27 — antes de tocar `min_ev_pct` (más delicado) o el filtro de
+                                   # ligas (último recurso). Si sigue sin llegar nada con 4.00, ese es el
+                                   # siguiente lugar donde mirar (ver README, "Rango de cuota").
+                                   # Pon `null` en cualquiera de los dos para desactivar ese tope.
+
+daily:
+  num_picks: 10                  # cantidad de picks a enviar cada mañana — son los 10 de MAYOR EV encontrados, nunca al azar
+  max_picks_per_event: 1         # diversifica: máx. 1 selección por partido (se relaja si no alcanzan picks distintos)
+  send_hour_local: "07:05"       # informativo — la hora real la define el cron de GitHub Actions
+                                  # (daily.yml) — se corrió unos minutos después de la hora en punto
+                                  # a propósito, ver la nota en ese archivo.
+  timezone: "America/Bogota"
+  settlement_max_age_days: 5     # si un evento no liquida en N días (aplazado, sin datos, o el proveedor ya no
+                                  # tiene el evento -> 404 al consultarlo), se marca 'unsettled_expired'. Esto
+                                  # aplica también si la CONSULTA del resultado falla repetidamente (ver el bug
+                                  # real corregido en ago-2026 en daily.py::settle_pending_daily_picks: antes,
+                                  # un 404 permanente dejaba el pick pendiente para siempre en vez de expirarlo).
+  lookahead_days: 3              # ventana de partidos a evaluar cada mañana (dentro de las ligas configuradas
+                                  # en leagues_by_sport — ver "Alcance" en el README). AJUSTE REAL
+                                  # (2026-08-26): estaba en 1 día — con solo 15 ligas curadas, algunos días
+                                  # simplemente no hay muchos partidos en la ventana de mañana. Subido a 3
+                                  # días como primer ajuste (sin bajar ningún estándar de calidad, solo mira
+                                  # más partidos) al ver 3 días seguidos en 0 picks — ver
+                                  # value_detection.max_odds arriba para el resto del ajuste. No debería
+                                  # duplicar picks: `daily.py` sigue liquidando/generando por fecha real de
+                                  # cada partido, y `max_events_per_run` (abajo) sigue limitando el total.
+  max_events_per_run: 400        # tope de partidos evaluados por corrida — sube esto si tu plan de la API lo permite
+  clv_window_hours: 3.0          # CLV (Closing Line Value): ver clv.py y el README. Qué tan cerca del
+                                  # arranque de un partido se captura su cuota de "cierre" — el workflow
+                                  # clv_snapshot.yml corre cada 3 horas buscando picks pendientes dentro
+                                  # de esta ventana. No necesitas tocar esto salvo que quieras capturas
+                                  # más ajustadas al saque inicial (bajando el número) o más margen de
+                                  # tolerancia si el proveedor a veces cierra el mercado temprano.
+
+secondary_signals:
+  # Señales adicionales, EXTERNAS al proveedor de cuotas — se consultan solo
+  # para los ~10 picks que YA pasaron el filtro de EV (nunca para los
+  # cientos de partidos candidatos evaluados cada corrida), para caber en
+  # sus planes gratuitos. NINGUNA de las dos ajusta el cálculo de EV — son
+  # puramente informativas/de contexto, se agregan como líneas extra debajo
+  # de cada pick en el mensaje de Telegram. Ver el README, "Señales
+  # secundarias", para el detalle completo (incluyendo dos limitaciones
+  # reales del plan gratuito de API-Football encontradas y esquivadas).
+  #
+  # Activadas (2026-08-25) tras verificar el parseo contra respuestas reales
+  # de ambas APIs (`scripts/verify_playerelo.py` / `verify_api_football.py`)
+  # — misma disciplina que con odds-api.io (Wplay, Pinnacle, el campo
+  # 'hdp'): nunca se adivinó la forma de la respuesta.
+  #
+  # El emparejamiento de equipos/partidos con odds-api.io es por NOMBRE (sin
+  # ID compartido) y es ESTRICTO a propósito (ver src/valuebet/team_match.py)
+  # — vas a ver picks sin ninguna señal secundaria mientras el matching no
+  # cubra todas las variantes de nombre reales; es preferible a mostrar el
+  # dato de un equipo/partido equivocado.
+  playerelo:
+    # Segunda opinión independiente (playerelo.football): compara la
+    # probabilidad "justa" del libro de referencia contra la de PlayerElo
+    # (rating Elo por jugador, no por equipo) para cada pick de mercado h2h
+    # (no aplica a totals/btts en esta fase). Gratis: 500 solicitudes/mes,
+    # 10/minuto — ver https://playerelo.football/api-access
+    enabled: true
+    api_key: "TU_PLAYERELO_API_KEY_AQUI"   # o el secreto PLAYERELO_API_KEY
+    base_url: "https://data-api.playerelo.football"
+  injuries:
+    # Nota informativa de bajas/lesiones (api-football.com) junto a cada
+    # pick del mensaje de Telegram. Gratis: 100 solicitudes/día — ver
+    # https://www.api-football.com/pricing. Se consulta por FECHA
+    # (`/injuries?date=`), no por equipo+temporada — el plan gratuito
+    # bloquea la temporada en curso para team+season (confirmado con una
+    # llamada real), pero SÍ permite consultar por fecha.
+    enabled: true
+    api_key: "TU_APIFOOTBALL_API_KEY_AQUI"  # o el secreto APIFOOTBALL_API_KEY
+    base_url: "https://v3.football.api-sports.io"
+    via_rapidapi: false   # true si te suscribiste desde RapidAPI en vez de api-football.com directo
+
+pinnacle_reference:
+  # OPCIONAL y DESACTIVADO por defecto — a diferencia de secondary_signals
+  # de arriba, esto SÍ participa del cálculo de EV (es un libro de
+  # referencia más para devig, no una nota informativa). Ver el README,
+  # "Pinnacle como libro de referencia (opcional, no oficial)", para la
+  # discusión completa de riesgo antes de activarlo.
+  #
+  # Qué es: pinnapi.com es un servicio de TERCEROS, NO afiliado a Pinnacle
+  # (Pinnacle cerró su propia API pública el 23 de julio de 2025). Ofrece
+  # cuotas reales de Pinnacle vía REST, plan gratis de 100 requests/día sin
+  # tarjeta — verificado con una llamada real (2026-09-07,
+  # scripts/verify_pinnapi.py): UNA sola llamada trae ~1600 partidos de
+  # fútbol mundial en un solo request, cubriendo prácticamente las 26 ligas
+  # curadas de este proyecto (ver src/valuebet/pinnapi_provider.py para el
+  # mapeo verificado liga por liga).
+  #
+  # Por qué podría interesarte: Bet365 (arriba, en odds_provider) se usa
+  # como libro de referencia solo porque Pinnacle no está disponible en
+  # odds-api.io — pero Bet365 NO es un libro "sharp" en sentido estricto
+  # (ver README, "Sobre el libro de referencia"). Pinnacle sí lo es. Si
+  # activas esto, se usa como PRIMERA opción de referencia para los
+  # mercados 'h2h'/'totals' — Bet365 sigue siendo el respaldo automático
+  # para cualquier partido que Pinnacle no cubra, o si pinnapi falla por lo
+  # que sea (ver daily.py::_enrich_events_with_pinnacle_reference_safely,
+  # NUNCA tumba el resumen diario). Pinnacle no ofrece 'btts' como
+  # mercado — ese sigue dependiendo de Bet365 siempre, actives esto o no.
+  #
+  # El riesgo real, honesto: al no ser un servicio oficial, pinnapi.com
+  # podría dejar de funcionar sin aviso (le pasó a la fuente original,
+  # Pinnacle, con su propia API) o estar en una zona gris respecto a los
+  # Términos de Servicio de Pinnacle. Este proyecto lo trata como una
+  # mejora BEST-EFFORT, nunca como una dependencia dura — por diseño, un
+  # fallo acá jamás debería notarse más que en el log.
+  #
+  # ACTIVADO (2026-09-07): el usuario ya creó su key gratis en pinnapi.com y
+  # la configuró como el secreto PINNAPI_API_KEY en GitHub — con eso puesto,
+  # 'enabled: true' es lo único que faltaba para que el resumen diario
+  # empiece a usar Pinnacle como referencia preferida (con Bet365 de
+  # respaldo automático, como se explica arriba).
+  enabled: true
+  api_key: "TU_PINNAPI_API_KEY_AQUI"   # o el secreto PINNAPI_API_KEY — gratis en https://pinnapi.com/
+  base_url: "https://pinnapi.com"
+
+alerts:
+  telegram:
+    enabled: true
+    bot_token: "TU_BOT_TOKEN_AQUI"    # dado por @BotFather — en producción usa el secreto TELEGRAM_BOT_TOKEN
+    chat_id: "TU_CHAT_ID_AQUI"        # tu chat_id personal o de un grupo privado — o el secreto TELEGRAM_CHAT_ID
+  instagram:
+    # Publica automáticamente los picks del día, los resultados de ayer y (el
+    # día 1) el resumen mensual en la cuenta de Instagram de BotBet. Requiere
+    # una cuenta Business/Creator vinculada a una Página de Facebook, una App
+    # de Meta con App Review aprobado, y que este repositorio sea PÚBLICO
+    # (las imágenes se publican vía raw.githubusercontent.com) — ver el README.
+    enabled: false
+    access_token: "TU_ACCESS_TOKEN_DE_INSTAGRAM_AQUI"  # token de larga duración — en producción usa el secreto IG_ACCESS_TOKEN
+    ig_user_id: "TU_IG_USER_ID_AQUI"                   # ID numérico de la cuenta de Instagram — o el secreto IG_USER_ID
+    api_version: "v21.0"
+
+storage:
+  db_path: "data/valuebet.db"
+  output_dir: "output"           # imágenes generadas para redes sociales
+
+logging:
+  level: INFO
+  file: "data/valuebet.log"
