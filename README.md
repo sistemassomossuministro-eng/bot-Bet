@@ -270,14 +270,16 @@ este proyecto (ver el mapeo liga por liga en
 `src/valuebet/pinnapi_provider.py`) — muy por debajo del límite gratis,
 incluso re-consultando varias veces al día.
 
-Es **opcional y está desactivado por defecto** (`pinnacle_reference.enabled:
-false` en `config.example.yaml`). Si lo activas: se usa como PRIMERA opción
-de referencia para los mercados `h2h`/`totals` (Pinnacle, vía este servicio,
-no ofrece `btts` — confirmado revisando 200 partidos reales — así que `btts`
-sigue dependiendo siempre de Bet365). Bet365 (vía odds-api.io) sigue siendo
-el respaldo automático para cualquier partido que Pinnacle no cubra, o si la
-consulta a pinnapi falla por lo que sea — un fallo ahí se registra en el log
-y el resumen diario sigue funcionando normal, nunca se cae por esto (ver
+Es **opcional** (`pinnacle_reference.enabled` en `config.example.yaml` —
+activado desde el 2026-09-07, tras confirmar la cobertura con una llamada
+real; el código respeta igual `enabled: false` si en algún momento prefieres
+apagarlo). Estando activo: se usa como PRIMERA opción de referencia para los
+mercados `h2h`/`totals` (Pinnacle, vía este servicio, no ofrece `btts` —
+confirmado revisando 200 partidos reales — así que `btts` sigue dependiendo
+siempre de Bet365). Bet365 (vía odds-api.io) sigue siendo el respaldo
+automático para cualquier partido que Pinnacle no cubra, o si la consulta a
+pinnapi falla por lo que sea — un fallo ahí se registra en el log y el
+resumen diario sigue funcionando normal, nunca se cae por esto (ver
 `daily.py::_enrich_events_with_pinnacle_reference_safely`).
 
 **El riesgo real, sin maquillar**: al no ser un servicio oficial, pinnapi.com

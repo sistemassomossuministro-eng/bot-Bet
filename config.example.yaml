@@ -307,7 +307,13 @@ pinnacle_reference:
   # Términos de Servicio de Pinnacle. Este proyecto lo trata como una
   # mejora BEST-EFFORT, nunca como una dependencia dura — por diseño, un
   # fallo acá jamás debería notarse más que en el log.
-  enabled: false
+  #
+  # ACTIVADO (2026-09-07): el usuario ya creó su key gratis en pinnapi.com y
+  # la configuró como el secreto PINNAPI_API_KEY en GitHub — con eso puesto,
+  # 'enabled: true' es lo único que faltaba para que el resumen diario
+  # empiece a usar Pinnacle como referencia preferida (con Bet365 de
+  # respaldo automático, como se explica arriba).
+  enabled: true
   api_key: "TU_PINNAPI_API_KEY_AQUI"   # o el secreto PINNAPI_API_KEY — gratis en https://pinnapi.com/
   base_url: "https://pinnapi.com"
 

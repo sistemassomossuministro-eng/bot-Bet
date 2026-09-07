@@ -398,6 +398,19 @@ def test_example_config_secondary_signals_enabled():
     assert cfg.secondary_signals.injuries.via_rapidapi is False
 
 
+def test_example_config_pinnacle_reference_enabled():
+    """config.example.yaml debe traer pinnacle_reference activado
+    (2026-09-07, tras confirmar la cobertura de Pinnacle vía pinnapi.com con
+    una llamada real) — red de seguridad ante un `enabled: false` accidental
+    al editar el yaml, mismo motivo que el test de arriba para
+    secondary_signals."""
+    example_path = Path(__file__).resolve().parents[1] / "config.example.yaml"
+    cfg = load_config(str(example_path))
+
+    assert cfg.pinnacle_reference.enabled is True
+    assert cfg.pinnacle_reference.base_url == "https://pinnapi.com"
+
+
 def test_leagues_by_sport_parsed_from_yaml():
     # leagues_by_sport debe quedar DENTRO del bloque odds_provider (no al final
     # del yaml como value_detection) para que se parsee como parte de él.
