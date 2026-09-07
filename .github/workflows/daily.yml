@@ -75,6 +75,10 @@ jobs:
           # nunca se hubiera tocado).
           PLAYERELO_API_KEY: ${{ secrets.PLAYERELO_API_KEY }}
           APIFOOTBALL_API_KEY: ${{ secrets.APIFOOTBALL_API_KEY }}
+          # Pinnacle vía pinnapi.com (fuente NO oficial, opcional — ver
+          # config.example.yaml, sección pinnacle_reference). Sin efecto a
+          # menos que también pongas pinnacle_reference.enabled=true.
+          PINNAPI_API_KEY: ${{ secrets.PINNAPI_API_KEY }}
         run: python -m valuebet.daily_job --config config.yaml
 
       - name: Commit y push de la base de datos y las imágenes

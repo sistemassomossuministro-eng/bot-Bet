@@ -126,6 +126,31 @@ class SecondarySignalsConfig:
 
 
 @dataclass
+class PinnacleReferenceConfig:
+    # NO es una "señal secundaria" como PlayerElo/lesiones (esas nunca tocan
+    # ev_pct/fair_probability) — esto SÍ participa del cálculo de EV, como un
+    # libro de referencia más (ver value_finder.py::find_value_bets_in_event).
+    # Por eso vive en su propia sección, no dentro de secondary_signals.
+    #
+    # Fuente NO OFICIAL (pinnapi.com, un tercero no afiliado a Pinnacle — ver
+    # config.example.yaml y el estado del proyecto para la discusión de
+    # riesgo completa). enabled=False por defecto: activarlo es una decisión
+    # consciente del usuario, no algo que este proyecto prenda solo.
+    #
+    # Cuando está activo, se usa como PRIMERA opción de libro de referencia
+    # para 'h2h'/'totals' (Pinnacle no ofrece 'btts' — ver pinnapi_provider.py)
+    # y Bet365 (vía odds_provider.reference_bookmakers) sigue siendo el
+    # respaldo automático para cualquier partido/mercado que Pinnacle no
+    # cubra o si la consulta falla — ver daily.py::
+    # _enrich_events_with_pinnacle_reference_safely. Nunca se manda a
+    # odds-api.io como si fuera uno de sus propios bookmakers (rompería el
+    # tope de 2 bookmakers del plan gratis) — es una fuente de datos aparte.
+    enabled: bool = False
+    api_key: str = ""
+    base_url: str = "https://pinnapi.com"
+
+
+@dataclass
 class TelegramConfig:
     enabled: bool
     bot_token: str
@@ -167,6 +192,7 @@ class AppConfig:
     # (tests, código de terceros) que no pasen este argumento explícitamente.
     instagram: Optional[InstagramConfig] = None
     secondary_signals: SecondarySignalsConfig = field(default_factory=SecondarySignalsConfig)
+    pinnacle_reference: PinnacleReferenceConfig = field(default_factory=PinnacleReferenceConfig)
 
 
 def load_config(path: str = "config.yaml") -> AppConfig:
@@ -293,6 +319,14 @@ def load_config(path: str = "config.yaml") -> AppConfig:
     )
     secondary_signals = SecondarySignalsConfig(playerelo=playerelo, injuries=injuries)
 
+    pinnacle_raw = raw.get("pinnacle_reference", {})
+    pinnapi_api_key = os.environ.get("PINNAPI_API_KEY") or pinnacle_raw.get("api_key", "")
+    pinnacle_reference = PinnacleReferenceConfig(
+        enabled=bool(pinnacle_raw.get("enabled", False)),
+        api_key=pinnapi_api_key,
+        base_url=pinnacle_raw.get("base_url", "https://pinnapi.com"),
+    )
+
     return AppConfig(
         bankroll=bankroll,
         odds_provider=odds_provider,
@@ -301,6 +335,7 @@ def load_config(path: str = "config.yaml") -> AppConfig:
         telegram=telegram,
         instagram=instagram,
         secondary_signals=secondary_signals,
+        pinnacle_reference=pinnacle_reference,
         db_path=storage_raw.get("db_path", "data/valuebet.db"),
         output_dir=storage_raw.get("output_dir", "output"),
         log_level=logging_raw.get("level", "INFO"),

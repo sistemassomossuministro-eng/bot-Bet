@@ -140,6 +140,44 @@ def test_secondary_signals_env_vars_override_yaml(monkeypatch):
         assert cfg.secondary_signals.injuries.api_key == "env-af-key"
 
 
+def test_pinnacle_reference_defaults_disabled():
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg_path = Path(tmp) / "config.yaml"
+        cfg_path.write_text(CONFIG_YAML)
+
+        cfg = load_config(str(cfg_path))
+
+        assert cfg.pinnacle_reference.enabled is False
+        assert cfg.pinnacle_reference.base_url == "https://pinnapi.com"
+
+
+def test_pinnacle_reference_from_yaml():
+    config_with_pr = CONFIG_YAML + (
+        "pinnacle_reference:\n"
+        "  enabled: true\n"
+        "  api_key: \"pinnapi-key\"\n"
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg_path = Path(tmp) / "config.yaml"
+        cfg_path.write_text(config_with_pr)
+
+        cfg = load_config(str(cfg_path))
+
+        assert cfg.pinnacle_reference.enabled is True
+        assert cfg.pinnacle_reference.api_key == "pinnapi-key"
+
+
+def test_pinnacle_reference_env_var_overrides_yaml(monkeypatch):
+    monkeypatch.setenv("PINNAPI_API_KEY", "env-pinnapi-key")
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg_path = Path(tmp) / "config.yaml"
+        cfg_path.write_text(CONFIG_YAML)
+
+        cfg = load_config(str(cfg_path))
+
+        assert cfg.pinnacle_reference.api_key == "env-pinnapi-key"
+
+
 def test_value_detection_max_totals_point_custom_value_from_yaml():
     config_with_vd = CONFIG_YAML + (
         "value_detection:\n"

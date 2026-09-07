@@ -1,0 +1,68 @@
+name: Chequeo semanal de slugs de ligas (fútbol)
+
+# Motivo (ver README, "Riesgos de mantenimiento del filtro de fútbol"): la
+# API de odds-api.io a veces le cambia el nombre al slug de una liga cuando
+# cambia de fase (ej. Argentina/México "-apertura" <-> "-clausura", o como
+# pasó de verdad con la UEFA en sep-2026, le quitan el sufijo de fase del
+# todo). Cuando eso pasa, el slug viejo deja de existir y esa liga deja de
+# traer partidos EN SILENCIO (sin error, 0 eventos) — antes dependía de que
+# alguien se acordara de revisar esto a mano. Este job corre semanalmente y:
+#   - si encuentra un reemplazo seguro (un único candidato obvio del mismo
+#     torneo), actualiza config.example.yaml solo y lo commitea;
+#   - si no (0 o varios candidatos posibles), NO toca el archivo — solo
+#     avisa por Telegram para que un humano decida (nunca se adivina un
+#     slug). Ver scripts/check_league_slugs.py y
+#     src/valuebet/league_slug_check.py para la lógica completa.
+#
+# Domingo 05:00 UTC (~00:00 hora de Bogotá) a propósito: no choca con
+# daily.yml (12:05 UTC todos los días) ni con clv_snapshot.yml (cada 3h,
+# minuto 30) — mismo principio que esos dos, evitar que dos workflows
+# intenten hacer commit/push al mismo tiempo.
+on:
+  schedule:
+    - cron: "0 5 * * 0"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: weekly-league-slug-check
+  cancel-in-progress: false
+
+jobs:
+  check-slugs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
+      - name: Chequear slugs de ligas de fútbol
+        env:
+          PYTHONPATH: src
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python scripts/check_league_slugs.py --config config.example.yaml
+
+      - name: Commit y push si config.example.yaml cambió
+        run: |
+          git config user.name "botbet-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add config.example.yaml
+          if git diff --cached --quiet; then
+            echo "Sin cambios de slugs esta semana."
+          else
+            git commit -m "Auto-actualización de slugs de ligas de fútbol $(date -u +%F)"
+            git push
+          fi

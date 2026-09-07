@@ -317,6 +317,16 @@ class OddsApiIoProvider(OddsProvider):
                 events.append(self._parse_event(raw))
         return events
 
+    def list_leagues(self, sport: str) -> List[dict]:
+        """Devuelve el catálogo completo de ligas del proveedor para un deporte
+        (GET /leagues?sport=...), con su 'name'/'slug'/'eventsCount'. NO se usa
+        en el ciclo diario (eso sigue siendo list_events/get_events_odds) —
+        es para scripts/check_league_slugs.py, que la usa para detectar si la
+        API le cambió el nombre a algún slug configurado en
+        leagues_by_sport.football (ver league_slug_check.py)."""
+        data = self._get("/leagues", {"sport": sport})
+        return data if isinstance(data, list) else data.get("data", data.get("leagues", []))
+
     def get_event_result(self, event_id: str) -> EventResult:
         """Consulta el estado/marcador de un evento vía GET /events/{id}.
 

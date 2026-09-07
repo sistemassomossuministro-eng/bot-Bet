@@ -97,6 +97,57 @@ def select_daily_picks(
     return picks[:num_picks]
 
 
+def _reference_bookmakers_for_devig(cfg: AppConfig, events: List[Event]) -> List[str]:
+    """Arma la lista de libros de referencia a usar en find_value_bets — NO la
+    misma que `cfg.odds_provider.reference_bookmakers` (esa se manda tal cual
+    a odds-api.io como parámetro 'bookmakers' de /odds/multi, y agregar
+    "Pinnacle" ahí rompería el tope de 2 bookmakers propios del plan gratis
+    de odds-api.io, además de que Pinnacle NO es un bookmaker de odds-api.io).
+
+    Si pinnacle_reference está activado, intenta enriquecer `events` EN EL
+    LUGAR con los mercados de Pinnacle (ver pinnapi_provider.py) y antepone
+    "Pinnacle" a la lista de referencia — find_value_bets ya usa el PRIMER
+    libro de referencia que tenga el mercado completo para devigar (ver
+    find_value_bets_in_event), así que anteponerlo alcanza para que Pinnacle
+    tenga prioridad sobre Bet365 sin ningún caso especial: un evento/mercado
+    que Pinnacle no cubra (o si la consulta entera falla) simplemente cae de
+    vuelta a Bet365, porque ese partido no tendrá mercados bajo la clave
+    "Pinnacle" en absoluto.
+
+    Cualquier fallo consultando pinnapi (key inválida, red caída, forma de
+    respuesta inesperada) se registra y se sigue SOLO con
+    cfg.odds_provider.reference_bookmakers (Bet365) — esta fuente es
+    opcional y no oficial (ver PinnacleReferenceConfig), nunca debe tumbar
+    el resumen diario."""
+    base_reference = cfg.odds_provider.reference_bookmakers
+    if not cfg.pinnacle_reference.enabled:
+        return base_reference
+
+    try:
+        from .pinnapi_provider import PinnapiProvider, attach_pinnacle_reference_markets
+
+        provider = PinnapiProvider(
+            api_key=cfg.pinnacle_reference.api_key,
+            base_url=cfg.pinnacle_reference.base_url,
+        )
+        pinnapi_events = provider.get_soccer_events()
+        matched = attach_pinnacle_reference_markets(events, pinnapi_events)
+        logger.info(
+            "Pinnacle (vía pinnapi.com, fuente no oficial): %d/%d evento(s) de fútbol emparejados "
+            "y usados como referencia preferida para h2h/totals (el resto sigue con Bet365).",
+            matched,
+            sum(1 for e in events if e.sport == "football"),
+        )
+    except ValueError as exc:
+        logger.warning("pinnacle_reference.enabled=true pero no se pudo inicializar (%s) — se sigue solo con Bet365.", exc)
+        return base_reference
+    except Exception:
+        logger.exception("Fallo consultando pinnapi.com para la referencia de Pinnacle — se sigue solo con Bet365.")
+        return base_reference
+
+    return ["Pinnacle"] + base_reference
+
+
 def _enrich_picks_with_secondary_signals_safely(cfg: AppConfig, picks: List[ValueBet]) -> None:
     """Construye los providers de PlayerElo/API-Football (si están activados
     y con api_key real) y enriquece `picks` en el lugar. Cualquier fallo acá
@@ -186,6 +237,15 @@ def generate_daily_picks(
         except Exception:
             logger.exception("Fallo al obtener cuotas en lote para '%s' (%d eventos)", sport, len(event_ids))
 
+    # Si pinnacle_reference.enabled=true, esto enriquece `events` EN EL LUGAR
+    # con los mercados de Pinnacle (h2h/totals) donde haya podido emparejar
+    # el partido, y devuelve ["Pinnacle", ...Bet365...] para que se use como
+    # referencia preferida; si está desactivado o falla, devuelve la lista
+    # de siempre (solo Bet365) sin tocar `events` — ver la función para el
+    # detalle completo de por qué esto NO es lo mismo que
+    # cfg.odds_provider.reference_bookmakers.
+    reference_bookmakers = _reference_bookmakers_for_devig(cfg, events)
+
     # near_misses: cualquier candidato que sí cayó dentro del rango de cuota
     # (min_odds/max_odds) y sí se pudo devigar/calcular su EV real, aunque no
     # haya llegado a min_ev_pct — ver NearMiss en value_finder.py. Puramente
@@ -194,7 +254,7 @@ def generate_daily_picks(
     candidates = find_value_bets(
         events,
         target_bookmakers=cfg.odds_provider.target_bookmakers,
-        reference_bookmakers=cfg.odds_provider.reference_bookmakers,
+        reference_bookmakers=reference_bookmakers,
         devig_method=cfg.value_detection.devig_method,
         min_ev_pct=cfg.value_detection.min_ev_pct,
         min_reference_books=cfg.value_detection.min_reference_books,

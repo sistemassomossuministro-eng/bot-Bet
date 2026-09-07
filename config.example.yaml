@@ -63,6 +63,15 @@ odds_provider:
                                              # respuesta real de GET /leagues?sport=football (nunca
                                              # adivinados) — ver el README, "Alcance", para el detalle
                                              # completo y las advertencias de mantenimiento marcadas ⚠️.
+                                             # Desde sep-2026 hay un chequeo AUTOMÁTICO semanal de estos
+                                             # slugs (weekly_league_slug_check.yml ->
+                                             # scripts/check_league_slugs.py): si la API le cambia el
+                                             # sufijo de fase a alguno (ej. Apertura -> Clausura, o se lo
+                                             # quita como pasó con la UEFA), y hay un único reemplazo obvio,
+                                             # este bloque se actualiza SOLO (verás un comentario
+                                             # "🤖 auto-actualizado <fecha>" arriba de la línea que cambió).
+                                             # Si el caso es ambiguo, no se toca nada y llega un aviso por
+                                             # Telegram para revisión manual — nunca se adivina un slug.
       - "colombia-liga-dimayor-finalizacion"   # Colombia — Categoría Primera A (Liga BetPlay Dimayor).
                                                 # OJO: existe también "colombia-torneo-dimayor-clausura"
                                                 # en la respuesta de la API — es la Primera B (segunda
@@ -264,6 +273,43 @@ secondary_signals:
     api_key: "TU_APIFOOTBALL_API_KEY_AQUI"  # o el secreto APIFOOTBALL_API_KEY
     base_url: "https://v3.football.api-sports.io"
     via_rapidapi: false   # true si te suscribiste desde RapidAPI en vez de api-football.com directo
+
+pinnacle_reference:
+  # OPCIONAL y DESACTIVADO por defecto — a diferencia de secondary_signals
+  # de arriba, esto SÍ participa del cálculo de EV (es un libro de
+  # referencia más para devig, no una nota informativa). Ver el README,
+  # "Pinnacle como libro de referencia (opcional, no oficial)", para la
+  # discusión completa de riesgo antes de activarlo.
+  #
+  # Qué es: pinnapi.com es un servicio de TERCEROS, NO afiliado a Pinnacle
+  # (Pinnacle cerró su propia API pública el 23 de julio de 2025). Ofrece
+  # cuotas reales de Pinnacle vía REST, plan gratis de 100 requests/día sin
+  # tarjeta — verificado con una llamada real (2026-09-07,
+  # scripts/verify_pinnapi.py): UNA sola llamada trae ~1600 partidos de
+  # fútbol mundial en un solo request, cubriendo prácticamente las 26 ligas
+  # curadas de este proyecto (ver src/valuebet/pinnapi_provider.py para el
+  # mapeo verificado liga por liga).
+  #
+  # Por qué podría interesarte: Bet365 (arriba, en odds_provider) se usa
+  # como libro de referencia solo porque Pinnacle no está disponible en
+  # odds-api.io — pero Bet365 NO es un libro "sharp" en sentido estricto
+  # (ver README, "Sobre el libro de referencia"). Pinnacle sí lo es. Si
+  # activas esto, se usa como PRIMERA opción de referencia para los
+  # mercados 'h2h'/'totals' — Bet365 sigue siendo el respaldo automático
+  # para cualquier partido que Pinnacle no cubra, o si pinnapi falla por lo
+  # que sea (ver daily.py::_enrich_events_with_pinnacle_reference_safely,
+  # NUNCA tumba el resumen diario). Pinnacle no ofrece 'btts' como
+  # mercado — ese sigue dependiendo de Bet365 siempre, actives esto o no.
+  #
+  # El riesgo real, honesto: al no ser un servicio oficial, pinnapi.com
+  # podría dejar de funcionar sin aviso (le pasó a la fuente original,
+  # Pinnacle, con su propia API) o estar en una zona gris respecto a los
+  # Términos de Servicio de Pinnacle. Este proyecto lo trata como una
+  # mejora BEST-EFFORT, nunca como una dependencia dura — por diseño, un
+  # fallo acá jamás debería notarse más que en el log.
+  enabled: false
+  api_key: "TU_PINNAPI_API_KEY_AQUI"   # o el secreto PINNAPI_API_KEY — gratis en https://pinnapi.com/
+  base_url: "https://pinnapi.com"
 
 alerts:
   telegram:

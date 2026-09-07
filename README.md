@@ -139,16 +139,39 @@ para siempre:
    siguen con el mismo sufijo — pero el mismo riesgo de cambio de fase
    sigue abierto para ellas.
 
-**Mitigación mientras tanto**: si de un día para otro dejan de aparecer picks
-de alguno de los países/torneos de arriba durante varios días seguidos (y sí
-hay partidos reales de por medio), es la primera señal de que el slug
-cambió — como ya pasó una vez con UEFA. Vuelve a pedir
-`GET https://api.odds-api.io/v3/leagues?sport=football&apiKey=TU_KEY`, busca
-la liga/torneo afectado y actualiza el slug en `leagues_by_sport.football`.
-No hay forma de resolver esto de una vez y para siempre sin más información
-de la API (por ejemplo, si odds-api.io hiciera matching por prefijo en vez de
-exacto, o publicara un slug estable por torneo) — este proyecto no adivina
-esa respuesta, la deja documentada como riesgo abierto y monitoreado.
+**Mitigación automática (desde sep-2026)**: ya no depende solo de acordarse.
+Un workflow semanal (`.github/workflows/weekly_league_slug_check.yml`, corre
+los domingos, también se puede disparar a mano desde la pestaña Actions)
+ejecuta `scripts/check_league_slugs.py`, que compara los 26 slugs
+configurados contra una respuesta real y actual de
+`GET /leagues?sport=football` (lógica completa, testeada, en
+`src/valuebet/league_slug_check.py`):
+
+- Si un slug desapareció pero hay **exactamente un** candidato que es
+  claramente la misma competencia con el sufijo de fase agregado, quitado o
+  cambiado (el heurístico compara el slug sin su sufijo de fase conocido —
+  `-apertura`, `-clausura`, `-finalizacion`, `-playoff-round`,
+  `-knockout-stage`, etc.), el job actualiza `config.example.yaml` **solo**,
+  deja un comentario con la fecha justo arriba de la línea que cambió (ej.
+  `# 🤖 auto-actualizado 2026-09-21 por scripts/check_league_slugs.py: ...`)
+  y hace commit/push — exactamente el mismo arreglo que se hizo a mano para
+  la UEFA en sep-2026, pero automático.
+- Si es ambiguo (0 candidatos — la liga puede haber desaparecido del todo —
+  o 2+ candidatos posibles, ej. si por un tiempo conviven Apertura y
+  Clausura), el job **no toca el archivo** — nunca adivina un slug — y en
+  cambio manda un resumen por Telegram para revisión manual, con los mismos
+  pasos de siempre: pedir `GET /leagues?sport=football` a mano, confirmar la
+  liga correcta, y editar `leagues_by_sport.football`.
+
+El script solo edita el texto crudo del archivo con expresiones regulares
+acotadas a las líneas `- "slug"` de `leagues_by_sport.football` — a propósito
+no usa un parser YAML completo, porque PyYAML no conserva comentarios al
+reescribir y este archivo depende de ellos para documentar cada decisión.
+Sigue habiendo un residuo de riesgo: si la API introduce un sufijo de fase
+que no está en la lista conocida del script, o le cambia el nombre a una liga
+de una forma que no es "mismo slug menos/con otro sufijo de fase", el job lo
+va a reportar como ambiguo (nunca se auto-actualiza a ciegas) y toca seguir
+resolviéndolo a mano como antes.
 
 ### 🐛 Bug real (corregido, ago-2026): `GET /events` no acepta varias ligas en una sola llamada
 
@@ -233,6 +256,48 @@ El plan gratuito de odds-api.io además solo permite **2 bookmakers propios en
 total** (target + reference combinados) — con Betplay + Bet365 ya se ocupan
 los dos cupos, así que agregar una tercera casa (otra target o otra
 reference) probablemente exige subir de plan.
+
+### Pinnacle como libro de referencia (opcional, no oficial)
+
+Desde sep-2026 hay una forma de usar Pinnacle de verdad como referencia, sin
+pagar: **pinnapi.com**, un servicio de TERCEROS (NO afiliado a Pinnacle —
+existe porque Pinnacle cerró su propia API pública el 23 de julio de 2025)
+que expone cuotas reales de Pinnacle vía REST, con un plan gratis de 100
+requests/día sin tarjeta. Se verificó con una llamada real
+(`scripts/verify_pinnapi.py`, 2026-09-07): **una sola llamada** trae ~1600
+partidos de fútbol mundial, cubriendo prácticamente las 26 ligas curadas de
+este proyecto (ver el mapeo liga por liga en
+`src/valuebet/pinnapi_provider.py`) — muy por debajo del límite gratis,
+incluso re-consultando varias veces al día.
+
+Es **opcional y está desactivado por defecto** (`pinnacle_reference.enabled:
+false` en `config.example.yaml`). Si lo activas: se usa como PRIMERA opción
+de referencia para los mercados `h2h`/`totals` (Pinnacle, vía este servicio,
+no ofrece `btts` — confirmado revisando 200 partidos reales — así que `btts`
+sigue dependiendo siempre de Bet365). Bet365 (vía odds-api.io) sigue siendo
+el respaldo automático para cualquier partido que Pinnacle no cubra, o si la
+consulta a pinnapi falla por lo que sea — un fallo ahí se registra en el log
+y el resumen diario sigue funcionando normal, nunca se cae por esto (ver
+`daily.py::_enrich_events_with_pinnacle_reference_safely`).
+
+**El riesgo real, sin maquillar**: al no ser un servicio oficial, pinnapi.com
+podría dejar de funcionar sin aviso (le pasó a la fuente original, Pinnacle,
+con su propia API) o estar en una zona gris respecto a los Términos de
+Servicio de Pinnacle. Este proyecto lo trata como una mejora *best-effort*,
+nunca como una dependencia dura — actívalo solo si te parece un riesgo
+razonable para tu caso. El emparejamiento de partidos entre proveedores es
+por nombre de equipo (ver `team_match.py`, deliberadamente estricto) más una
+ventana de 12 horas en el kickoff, y se filtra por una lista blanca EXACTA
+de nombres de liga de pinnapi — su respuesta trae variantes sintéticas del
+mismo partido para otros mercados (córners, tarjetas) y categorías
+femenina/juvenil bajo nombres de "liga" separados, así que filtrar por lista
+exacta (en vez de por país) evita mezclar por accidente el mercado de
+córners con el de goles de un partido que sí interesa.
+
+Para activarlo: crea una key gratis en https://pinnapi.com/ (sin tarjeta),
+ponla en el secreto de GitHub `PINNAPI_API_KEY` (o en
+`pinnacle_reference.api_key` de tu `config.yaml` local), y pon
+`pinnacle_reference.enabled: true`.
 
 ### Mercados soportados: 1X2 (h2h), totales ("más/menos goles") y ambos anotan (btts)
 
@@ -757,6 +822,13 @@ sus versiones `.jpg` para Instagram) para no inflar el repo con cientos de
 PNGs — Telegram e Instagram ya quedan como el archivo histórico de cada
 imagen publicada. Si prefieres guardar un PNG por fecha en el repo, es un
 cambio pequeño en `daily_job.py`.
+
+Además de `daily.yml` corren otros dos workflows, con los mismos Secrets de
+arriba (no hace falta crear ninguno nuevo): `clv_snapshot.yml` (cada 3 horas,
+ver "Closing Line Value") y `weekly_league_slug_check.yml` (semanal, ver
+"Riesgos de mantenimiento del filtro de fútbol") — este último puede hacer
+commit/push de `config.example.yaml` si detecta y corrige solo un slug de
+liga obsoleto.
 
 ## Identidad de marca e Instagram
 

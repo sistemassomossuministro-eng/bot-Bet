@@ -10,6 +10,7 @@ from valuebet.config import (
     AppConfig,
     DailyConfig,
     OddsProviderConfig,
+    PinnacleReferenceConfig,
     PlayerEloConfig,
     SecondarySignalsConfig,
     ValueDetectionConfig,
@@ -603,3 +604,146 @@ def test_generate_daily_picks_collapses_correlated_totals_lines():
         assert len(picks) == 2
         by_market = {(p.market_key, p.selection) for p in picks}
         assert by_market == {("totals", "over_3.75"), ("btts", "yes")}
+
+
+class _FakeProviderForPinnacleReference:
+    """Un evento h2h con EV positivo real usando SOLO lo que vendría de
+    odds-api.io (Betplay + opcionalmente Bet365) — Pinnacle NUNCA sale de
+    acá: se agrega (o no) por separado vía
+    pinnapi_provider.attach_pinnacle_reference_markets, parcheado en los
+    tests de abajo para no depender de la red real de pinnapi.com."""
+
+    def __init__(self, include_bet365: bool = True):
+        bookmakers = {
+            "Betplay": [
+                BookmakerMarket(
+                    bookmaker="Betplay",
+                    market_key="h2h",
+                    updated_at=None,
+                    outcomes=[Outcome("home", 2.30), Outcome("draw", 3.30), Outcome("away", 3.80)],
+                )
+            ],
+        }
+        if include_bet365:
+            bookmakers["Bet365"] = [
+                BookmakerMarket(
+                    bookmaker="Bet365",
+                    market_key="h2h",
+                    updated_at=None,
+                    outcomes=[Outcome("home", 1.95), Outcome("draw", 3.60), Outcome("away", 4.20)],
+                )
+            ]
+        self._event = Event(
+            event_id="pinn1",
+            sport="football",
+            league="England - Premier League",
+            home_team="Arsenal",
+            away_team="Chelsea",
+            commence_time=datetime.utcnow() + timedelta(hours=5),
+            bookmakers=bookmakers,
+        )
+
+    def list_events(self, sport, leagues=None, lookahead_days=3, limit=None):
+        return [self._event]
+
+    def get_events_odds(self, event_ids, bookmakers):
+        return [self._event for _ in event_ids]
+
+    def get_event_result(self, event_id):
+        raise NotImplementedError
+
+
+def _pinnacle_cfg(enabled: bool, api_key: str = "fake-key") -> AppConfig:
+    return AppConfig(
+        bankroll=BankrollLimits(total=1_000_000),
+        odds_provider=OddsProviderConfig(
+            name="odds_api_io",
+            api_key="x",
+            base_url="https://x",
+            target_bookmakers=["Betplay"],
+            reference_bookmakers=["Bet365"],
+            sports=["football"],
+        ),
+        value_detection=ValueDetectionConfig(min_ev_pct=1.0),
+        daily=DailyConfig(num_picks=10, max_picks_per_event=1),
+        telegram=None,
+        db_path="",
+        output_dir="output",
+        log_level="INFO",
+        log_file=None,
+        pinnacle_reference=PinnacleReferenceConfig(enabled=enabled, api_key=api_key),
+    )
+
+
+def test_generate_daily_picks_prefers_pinnacle_over_bet365_when_matched():
+    """pinnacle_reference.enabled=true y pinnapi SÍ encuentra el partido ->
+    Pinnacle debe usarse como libro de referencia (antepuesto a la lista),
+    no Bet365 — aunque Bet365 ni siquiera esté disponible para este evento."""
+    with tempfile.TemporaryDirectory() as tmp:
+        storage = Storage(str(Path(tmp) / "t.db"))
+        cfg = _pinnacle_cfg(enabled=True)
+        provider = _FakeProviderForPinnacleReference(include_bet365=False)
+
+        pinnapi_event = {
+            "league_name": "England - Premier League",
+            "starts": (datetime.utcnow() + timedelta(hours=5)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "home": "Arsenal",
+            "away": "Chelsea",
+            "periods": {"num_0": {"money_line": {"home": 1.95, "draw": 3.60, "away": 4.20}}},
+        }
+
+        with patch("valuebet.pinnapi_provider.PinnapiProvider") as MockProvider:
+            MockProvider.return_value.get_soccer_events.return_value = [pinnapi_event]
+            picks = generate_daily_picks(cfg, provider, storage)
+
+        assert len(picks) == 1
+        assert picks[0].reference_bookmakers == ["Pinnacle"]
+
+
+def test_generate_daily_picks_falls_back_to_bet365_when_pinnapi_fails():
+    """Si pinnapi.com falla (red caída, key inválida, lo que sea), el
+    resumen diario debe seguir funcionando normal con Bet365 — pinnapi es
+    una fuente opcional y no oficial, nunca una dependencia dura."""
+    with tempfile.TemporaryDirectory() as tmp:
+        storage = Storage(str(Path(tmp) / "t.db"))
+        cfg = _pinnacle_cfg(enabled=True)
+        provider = _FakeProviderForPinnacleReference(include_bet365=True)
+
+        with patch("valuebet.pinnapi_provider.PinnapiProvider") as MockProvider:
+            MockProvider.return_value.get_soccer_events.side_effect = RuntimeError("pinnapi caído")
+            picks = generate_daily_picks(cfg, provider, storage)
+
+        assert len(picks) == 1
+        assert picks[0].reference_bookmakers == ["Bet365"]
+
+
+def test_generate_daily_picks_pinnacle_disabled_never_calls_pinnapi():
+    """pinnacle_reference.enabled=false (default) -> ni siquiera se
+    instancia PinnapiProvider, y todo sigue funcionando con Bet365 como
+    hasta ahora."""
+    with tempfile.TemporaryDirectory() as tmp:
+        storage = Storage(str(Path(tmp) / "t.db"))
+        cfg = _pinnacle_cfg(enabled=False)
+        provider = _FakeProviderForPinnacleReference(include_bet365=True)
+
+        with patch("valuebet.pinnapi_provider.PinnapiProvider") as MockProvider:
+            picks = generate_daily_picks(cfg, provider, storage)
+
+        MockProvider.assert_not_called()
+        assert len(picks) == 1
+        assert picks[0].reference_bookmakers == ["Bet365"]
+
+
+def test_generate_daily_picks_pinnacle_placeholder_key_does_not_crash():
+    """enabled=true pero con la api_key placeholder del ejemplo (usuario aún
+    no la configuró) -> PinnapiProvider real lanzaría ValueError al
+    construirse; debe registrarse y seguir con Bet365, no tumbar el job."""
+    with tempfile.TemporaryDirectory() as tmp:
+        storage = Storage(str(Path(tmp) / "t.db"))
+        cfg = _pinnacle_cfg(enabled=True, api_key="TU_PINNAPI_API_KEY_AQUI")
+        provider = _FakeProviderForPinnacleReference(include_bet365=True)
+
+        picks = generate_daily_picks(cfg, provider, storage)
+
+        assert len(picks) == 1
+        assert picks[0].reference_bookmakers == ["Bet365"]

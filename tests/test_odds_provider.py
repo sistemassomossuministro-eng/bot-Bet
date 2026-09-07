@@ -258,6 +258,37 @@ def test_list_events_without_leagues_makes_a_single_call_with_no_league_param():
     assert {e.event_id for e in events} == {"evt-1", "evt-2"}
 
 
+def test_list_leagues_returns_slug_list_for_plain_list_response():
+    """GET /leagues?sport=football devuelve una lista plana de dicts (name/
+    slug/eventsCount), igual que /events sin envoltorio 'data' — confirmado
+    contra una respuesta real pegada por el usuario (sep-2026), usada para
+    scripts/check_league_slugs.py."""
+    provider = OddsApiIoProvider(api_key="fake-key")
+    ok_resp = _make_response(
+        200,
+        [
+            {"name": "Spain - LaLiga", "slug": "spain-laliga", "eventsCount": 101},
+            {"name": "England - Premier League", "slug": "england-premier-league", "eventsCount": 110},
+        ],
+    )
+
+    with patch.object(provider._session, "get", return_value=ok_resp) as mock_get:
+        leagues = provider.list_leagues("football")
+
+    assert mock_get.call_args.kwargs["params"]["sport"] == "football"
+    assert [lg["slug"] for lg in leagues] == ["spain-laliga", "england-premier-league"]
+
+
+def test_list_leagues_unwraps_data_key_if_present():
+    provider = OddsApiIoProvider(api_key="fake-key")
+    ok_resp = _make_response(200, {"data": [{"name": "x", "slug": "usa-mls", "eventsCount": 166}]})
+
+    with patch.object(provider._session, "get", return_value=ok_resp):
+        leagues = provider.list_leagues("football")
+
+    assert [lg["slug"] for lg in leagues] == ["usa-mls"]
+
+
 def test_get_retries_on_server_error_5xx():
     provider = OddsApiIoProvider(api_key="fake-key")
     server_error = _make_response(500, text="internal error")
