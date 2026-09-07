@@ -53,8 +53,17 @@ un filtro curado por decisión explícita del usuario del proyecto: Colombia,
 Argentina, Brasil, USA (solo MLS), México, las 5 grandes ligas europeas
 (Premier League, LaLiga, Serie A, Bundesliga, Ligue 1), y los torneos de
 clubes UEFA (Champions/Europa/Conference League) y CONMEBOL (Libertadores/
-Sudamericana). El filtro completo, con los 15 slugs exactos y comentados uno
-por uno, vive en `leagues_by_sport.football` en `config.example.yaml`.
+Sudamericana).
+
+**Ampliado sep-2026** (a pedido del usuario, "más ligas para más opciones de
+picks"): se sumaron 4 ligas top europeas más (Países Bajos - Eredivisie,
+Portugal - Liga Portugal, Turquía - Süper Lig, Arabia Saudita - Saudi
+Professional League) y las 7 ligas top de Sudamérica que faltaban (Chile,
+Ecuador, Bolivia, Paraguay, Perú, Uruguay, Venezuela) — con eso, los 10
+países miembro de CONMEBOL ya tienen su liga doméstica cubierta, además de
+los dos torneos continentales (Libertadores/Sudamericana) que ya estaban.
+El filtro completo, ahora con 26 slugs exactos y comentados uno por uno,
+vive en `leagues_by_sport.football` en `config.example.yaml`.
 
 Agregar otro deporte es solo una línea más en `sports` (los slugs válidos
 están en `GET /sports` — con tu key:
@@ -73,7 +82,7 @@ sports: ["football", "basketball"]
 leagues: []                          # sin efecto: fútbol y basketball ya tienen
                                       # su propia entrada en leagues_by_sport
 leagues_by_sport:
-  football:                          # ver la lista completa (15 slugs,
+  football:                          # ver la lista completa (26 slugs,
     - "colombia-liga-dimayor-finalizacion"   # comentada uno por uno) en
     - "argentina-primera-lpf-clausura"       # config.example.yaml
     # ...
@@ -86,45 +95,60 @@ ligas, sin curar), basta con borrar la entrada `football:` de
 `leagues_by_sport` (o dejarla en `[]`) — el mecanismo ya soporta los dos
 modos, no hace falta tocar código.
 
-### ⚠️ Dos riesgos de mantenimiento del filtro de fútbol
+### ⚠️ Riesgos de mantenimiento del filtro de fútbol (uno de ellos ya se concretó)
 
-Los 15 slugs se verificaron uno por uno contra una respuesta real de
-`GET /leagues?sport=football` (agosto 2026) — nunca se adivinaron, siguiendo
-la misma disciplina que ya evitó repetir los bugs de Wplay, Pinnacle y el
-campo `hdp` de este proyecto. Aun así, quedaron dos riesgos que esa única
-respuesta no permitió descartar:
+Los slugs se verificaron uno por uno contra una respuesta real de
+`GET /leagues?sport=football` (agosto 2026, re-verificados y ampliados en
+septiembre 2026) — nunca se adivinaron, siguiendo la misma disciplina que ya
+evitó repetir los bugs de Wplay, Pinnacle y el campo `hdp` de este proyecto.
+Aun así, quedan dos riesgos que una respuesta puntual no permite descartar
+para siempre:
 
-1. **Argentina y México juegan en dos mitades de temporada (Apertura /
-   Clausura), y la API parece nombrar el slug de la liga por mitad**, no por
-   temporada completa: en el snapshot, Argentina solo tenía slug para
-   "Clausura" (`argentina-primera-lpf-clausura`) y México solo para
-   "Apertura" (`mexico-liga-mx-apertura`) — no apareció un slug "genérico"
-   sin mitad. Si es así, cuando cada torneo cierre y arranque la otra mitad
-   del año, el slug probablemente cambie de nombre y el filtro deje de traer
-   partidos de ese país **en silencio** (sin error, solo sin picks). Colombia
-   tiene el mismo formato de temporada partida, pero ahí sí se pudo confirmar
-   con certeza cuál de los dos slugs visibles es la Primera A real
+1. **Varios países juegan en dos mitades de temporada (Apertura / Clausura),
+   y la API parece nombrar el slug de la liga por mitad**, no por temporada
+   completa: Argentina (`argentina-primera-lpf-clausura`), México
+   (`mexico-liga-mx-apertura`), y — desde la ampliación de sep-2026 —
+   también Paraguay (`paraguay-division-de-honor-clausura`), Perú
+   (`peru-primera-division-clausura`), Uruguay
+   (`uruguay-primera-division-clausura`) y Venezuela
+   (`venezuela-primera-division-clausura`) muestran el sufijo de la mitad
+   vigente en el nombre del slug, sin que haya aparecido un slug "genérico"
+   sin mitad. Cuando cada torneo cierre y arranque la otra mitad del año, el
+   slug probablemente cambie de nombre y el filtro deje de traer partidos de
+   ese país **en silencio** (sin error, solo sin picks). Colombia tiene el
+   mismo formato de temporada partida, pero ahí sí se pudo confirmar con
+   certeza cuál de los dos slugs visibles es la Primera A real
    (`colombia-liga-dimayor-finalizacion` — "Liga DIMAYOR" es la nomenclatura
    oficial de Primera A, "Torneo DIMAYOR" es la Primera B; ver el comentario
    en `config.example.yaml`), pero probablemente tenga el mismo riesgo de
-   cambio de slug al pasar de Finalización a Apertura.
-2. **Los torneos UEFA y CONMEBOL solo mostraban un slug por fase actual**, no
-   uno estable para todo el torneo: en el snapshot, las 3 copas UEFA
-   aparecían únicamente como `...-playoff-round`, y Libertadores/Sudamericana
-   como `...-knockout-stage` — no había, por ejemplo, un slug de "fase de
-   grupos/liga" visible para comparar (probablemente porque esa fase no
-   estaba activa en ese momento del calendario).
+   cambio de slug al pasar de Finalización a Apertura. Chile, Ecuador y
+   Bolivia (sumados en la misma ampliación) NO muestran este sufijo en su
+   slug — parecen tener nomenclatura de temporada única, sin este riesgo.
+2. **🐛 Este riesgo ya se concretó una vez, y se corrigió (sep-2026)**: los
+   torneos UEFA y CONMEBOL solo mostraban un slug por fase actual, no uno
+   estable para todo el torneo. En agosto, las 3 copas UEFA aparecían como
+   `...-playoff-round`; para septiembre, al pasar el torneo a la fase de
+   liga, esos slugs **dejaron de existir** en la respuesta de la API y
+   fueron reemplazados por versiones sin sufijo de fase
+   (`international-clubs-uefa-champions-league`, y equivalentes para Europa/
+   Conference League) — es decir, durante ese tiempo el filtro probablemente
+   dejó de traer partidos de las 3 copas UEFA **en silencio**, sin ningún
+   error visible en el log. Ya corregido en `config.example.yaml` con los
+   slugs vigentes verificados en sep-2026. Libertadores/Sudamericana
+   (`...-knockout-stage`) se re-verificaron en la misma ronda y, por ahora,
+   siguen con el mismo sufijo — pero el mismo riesgo de cambio de fase
+   sigue abierto para ellas.
 
 **Mitigación mientras tanto**: si de un día para otro dejan de aparecer picks
-de Argentina, México, Colombia, o de algún torneo UEFA/CONMEBOL durante
-varios días seguidos (y sí hay partidos reales de por medio), es la primera
-señal de que el slug cambió. Vuelve a pedir
+de alguno de los países/torneos de arriba durante varios días seguidos (y sí
+hay partidos reales de por medio), es la primera señal de que el slug
+cambió — como ya pasó una vez con UEFA. Vuelve a pedir
 `GET https://api.odds-api.io/v3/leagues?sport=football&apiKey=TU_KEY`, busca
 la liga/torneo afectado y actualiza el slug en `leagues_by_sport.football`.
 No hay forma de resolver esto de una vez y para siempre sin más información
 de la API (por ejemplo, si odds-api.io hiciera matching por prefijo en vez de
 exacto, o publicara un slug estable por torneo) — este proyecto no adivina
-esa respuesta, la deja documentada como riesgo abierto.
+esa respuesta, la deja documentada como riesgo abierto y monitoreado.
 
 ### 🐛 Bug real (corregido, ago-2026): `GET /events` no acepta varias ligas en una sola llamada
 

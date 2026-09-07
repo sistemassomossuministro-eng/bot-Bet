@@ -56,15 +56,13 @@ odds_provider:
                                              # basketball. La NBA juega de octubre a junio: en temporada
                                              # baja (verano boreal) es normal que no aparezcan picks de
                                              # este deporte, no es un error.
-    football:                               # filtro curado (agosto 2026) — antes traía TODAS las ligas
-                                             # de fútbol del mundo (cientos, muchas de segunda/tercera
-                                             # división o infantiles con cuotas poco fiables). Ahora solo
-                                             # estas: Colombia, Argentina, Brasil, USA (MLS), México,
-                                             # Big 5 europeas, torneos UEFA y CONMEBOL. Todos los slugs
-                                             # de abajo se verificaron contra una respuesta real de
-                                             # GET /leagues?sport=football (nunca adivinados) — ver el
-                                             # README, "Alcance", para el detalle completo y las dos
-                                             # advertencias de mantenimiento marcadas ⚠️ más abajo.
+    football:                               # filtro curado (agosto 2026, ampliado sep-2026) — antes traía
+                                             # TODAS las ligas de fútbol del mundo (cientos, muchas de
+                                             # segunda/tercera división o infantiles con cuotas poco
+                                             # fiables). Todos los slugs de abajo se verificaron contra una
+                                             # respuesta real de GET /leagues?sport=football (nunca
+                                             # adivinados) — ver el README, "Alcance", para el detalle
+                                             # completo y las advertencias de mantenimiento marcadas ⚠️.
       - "colombia-liga-dimayor-finalizacion"   # Colombia — Categoría Primera A (Liga BetPlay Dimayor).
                                                 # OJO: existe también "colombia-torneo-dimayor-clausura"
                                                 # en la respuesta de la API — es la Primera B (segunda
@@ -75,12 +73,13 @@ odds_provider:
       - "argentina-primera-lpf-clausura"        # ⚠️ Argentina — Primera División (Liga Profesional de
                                                  # Fútbol). Se juega en dos mitades por año, Apertura y
                                                  # Clausura, y la API parece exponer un slug distinto para
-                                                 # cada una (a la fecha de este snapshot, solo "Clausura"
-                                                 # tenía partidos). Cuando termine el Clausura y arranque
-                                                 # el próximo Apertura, este slug puede dejar de traer
-                                                 # partidos — revisa con GET /leagues?sport=football y
-                                                 # agrega/actualiza el slug vigente si el pick de Argentina
-                                                 # desaparece por varios días seguidos.
+                                                 # cada una (confirmado de nuevo en sep-2026: sigue siendo
+                                                 # "Clausura" el único con partidos). Cuando termine el
+                                                 # Clausura y arranque el próximo Apertura, este slug puede
+                                                 # dejar de traer partidos — revisa con
+                                                 # GET /leagues?sport=football y agrega/actualiza el slug
+                                                 # vigente si el pick de Argentina desaparece por varios
+                                                 # días seguidos.
       - "brazil-brasileiro-serie-a"              # Brasil — Brasileirão Serie A. Temporada única (sin
                                                   # split Apertura/Clausura), no debería tener este riesgo.
       - "usa-mls"                                 # USA — MLS. A propósito NO se incluye la USL
@@ -89,35 +88,55 @@ odds_provider:
                                                     # del usuario de acotar a solo MLS.
       - "mexico-liga-mx-apertura"                 # ⚠️ México — Liga MX. Mismo riesgo que Argentina: se
                                                     # juega en Apertura/Clausura y la API parece nombrar el
-                                                    # slug por mitad de temporada (a la fecha de este
-                                                    # snapshot, solo "Apertura" tenía partidos). Revisa y
-                                                    # actualiza cuando cambie de mitad.
+                                                    # slug por mitad de temporada (confirmado de nuevo en
+                                                    # sep-2026: sigue siendo "Apertura" el único con
+                                                    # partidos). Revisa y actualiza cuando cambie de mitad.
       - "england-premier-league"                  # Big 5 europeas — temporada única (agosto-mayo), sin
       - "spain-laliga"                             # el riesgo de Apertura/Clausura de arriba.
       - "italy-serie-a"
       - "germany-bundesliga"
       - "france-ligue-1"
-      - "international-clubs-uefa-champions-league-playoff-round"   # ⚠️ Torneos UEFA — a la fecha de
-      - "international-clubs-uefa-europa-league-playoff-round"      # este snapshot (ago. 2026) la API
-      - "international-clubs-uefa-conference-league-playoff-round"  # solo mostraba slugs de la fase
-                                                                      # "Playoff Round" para las 3 copas
-                                                                      # UEFA. NO está confirmado si el
-                                                                      # slug es estable para todo el
-                                                                      # torneo o si cambia por fase (ej.
-                                                                      # "League Phase", "Round of 16") —
-                                                                      # es el mismo patrón de riesgo que
-                                                                      # Argentina/México arriba, pero acá
-                                                                      # ni siquiera hay una fase "de
-                                                                      # temporada completa" visible en el
-                                                                      # snapshot. Antes de confiar en esto
-                                                                      # a largo plazo, vuelve a pedir
-                                                                      # GET /leagues?sport=football cuando
-                                                                      # el torneo entre a la fase de
-                                                                      # grupos/liga y compara los slugs.
-      - "international-clubs-conmebol-libertadores-knockout-stage"  # ⚠️ Mismo riesgo que arriba, para
-      - "international-clubs-conmebol-sudamericana-knockout-stage"  # Libertadores/Sudamericana — a la
-                                                                      # fecha del snapshot solo aparecía
-                                                                      # la fase "Knockout stage".
+      - "netherlands-eredivisie"                  # Ampliación sep-2026 (a pedido del usuario, "más ligas
+      - "portugal-liga-portugal"                  # para más opciones de picks"): más ligas top europeas de
+      - "turkiye-super-lig"                       # buena liquidez, mismo criterio que Big 5 — temporada
+                                                   # única, sin riesgo de Apertura/Clausura. OJO con Portugal:
+                                                   # el slug real es "portugal-liga-portugal" (Liga Portugal,
+                                                   # antes "Primeira Liga") — NO "portugal-primeira-liga",
+                                                   # que no existe en la API; verificado contra la respuesta
+                                                   # real, no adivinado.
+      - "saudi-arabia-saudi-professional-league"  # Arabia Saudita — liga de creciente inversión/liquidez
+                                                   # (Ronaldo, Al-Nassr, etc.), temporada única.
+      - "international-clubs-uefa-champions-league"   # 🐛 CORREGIDO (sep-2026): estos 3 slugs tenían el
+      - "international-clubs-uefa-europa-league"      # sufijo "-playoff-round" desde agosto (cuando la fase
+      - "international-clubs-uefa-conference-league"  # vigente al verificar era esa) — el riesgo que ya
+                                                        # estaba documentado aquí se concretó: al pasar el
+                                                        # torneo a la fase de liga, la API le puso un slug
+                                                        # SIN sufijo de fase y el viejo ("...-playoff-round")
+                                                        # dejó de existir. Verificado de nuevo contra
+                                                        # GET /leagues?sport=football (sep-2026): el slug
+                                                        # actual estable es sin sufijo de fase. Si vuelve a
+                                                        # aparecer un sufijo de fase en el futuro (ronda de
+                                                        # eliminación, etc.), repetir esta verificación.
+      - "international-clubs-conmebol-libertadores-knockout-stage"  # ⚠️ Mismo riesgo que arriba para
+      - "international-clubs-conmebol-sudamericana-knockout-stage"  # Libertadores/Sudamericana — re-verificado
+                                                                      # en sep-2026, TODAVÍA con el sufijo
+                                                                      # "Knockout stage" (no cambió esta vez).
+      - "chile-primera-division"                  # Ampliación sep-2026: más ligas top de Sudamérica, mismo
+      - "ecuador-serie-a"                          # criterio que Argentina/Brasil/Colombia ya cubiertos.
+      - "bolivia-division-profesional"             # Chile y Bolivia no muestran nomenclatura Apertura/
+                                                    # Clausura en la API (temporada única aparente) — sin el
+                                                    # riesgo de arriba. Ecuador sí tiene poco volumen en el
+                                                    # snapshot (11 eventos) — vigilar si trae picks reales o
+                                                    # si es una liga con baja cobertura del proveedor.
+      - "paraguay-division-de-honor-clausura"     # ⚠️ Paraguay, Perú, Uruguay y Venezuela SÍ muestran sufijo
+      - "peru-primera-division-clausura"           # "Clausura" en el slug — mismo riesgo de Argentina/México:
+      - "uruguay-primera-division-clausura"        # probablemente cambie a "Apertura" (o desaparezca) cuando
+      - "venezuela-primera-division-clausura"      # termine la mitad de temporada vigente. Revisa con
+                                                    # GET /leagues?sport=football si algún pick de estos 4
+                                                    # países desaparece por varios días seguidos. Uruguay y
+                                                    # Bolivia mostraban muy pocos eventos en el snapshot (10 y
+                                                    # 16 respectivamente) — puede ser solo el momento de la
+                                                    # temporada, vigilar igual que Ecuador.
   poll_interval_seconds: 120
   lookahead_days: 3
   bookmaker_links: {}            # opcional: {"Betplay": "https://tu-url-verificada.../"} para que cada

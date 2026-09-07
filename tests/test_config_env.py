@@ -285,13 +285,21 @@ def test_leagues_for_sport_per_sport_override_does_not_affect_other_sports():
 
 
 def test_example_config_football_leagues_filter():
-    """config.example.yaml debe traer el filtro curado de ligas de fútbol
-    (Colombia, Argentina, Brasil, MLS, México, Big 5 europeas, torneos UEFA y
-    CONMEBOL) — todos los slugs verificados contra una respuesta real de
-    GET /leagues?sport=football (ago. 2026), nunca adivinados. Este test es
-    una red de seguridad ante typos/borrados accidentales al editar el yaml,
-    no una verificación contra la API en vivo (los slugs pueden cambiar con
-    el tiempo — ver el README, sección "Alcance", advertencias ⚠️)."""
+    """config.example.yaml debe traer el filtro curado de ligas de fútbol —
+    todos los slugs verificados contra una respuesta real de
+    GET /leagues?sport=football (ago. 2026, ampliado y re-verificado
+    sep. 2026), nunca adivinados. Este test es una red de seguridad ante
+    typos/borrados accidentales al editar el yaml, no una verificación
+    contra la API en vivo (los slugs pueden cambiar con el tiempo — ver el
+    README, sección "Alcance", advertencias ⚠️).
+
+    Ampliado sep-2026 a pedido del usuario ("más ligas para más opciones de
+    picks"): se sumaron más ligas top europeas (Países Bajos, Portugal,
+    Turquía, Arabia Saudita) y las ligas top de Sudamérica que faltaban
+    (Chile, Ecuador, Bolivia, Paraguay, Perú, Uruguay, Venezuela). De paso
+    se corrigió un bug real: los 3 slugs de UEFA tenían el sufijo
+    "-playoff-round" (vigente en agosto), que dejó de existir cuando el
+    torneo pasó a la fase de liga — el slug real ya no lleva ese sufijo."""
     example_path = Path(__file__).resolve().parents[1] / "config.example.yaml"
     cfg = load_config(str(example_path))
 
@@ -308,16 +316,32 @@ def test_example_config_football_leagues_filter():
         "italy-serie-a",
         "germany-bundesliga",
         "france-ligue-1",
-        "international-clubs-uefa-champions-league-playoff-round",
-        "international-clubs-uefa-europa-league-playoff-round",
-        "international-clubs-uefa-conference-league-playoff-round",
+        "netherlands-eredivisie",
+        "portugal-liga-portugal",
+        "turkiye-super-lig",
+        "saudi-arabia-saudi-professional-league",
+        "international-clubs-uefa-champions-league",
+        "international-clubs-uefa-europa-league",
+        "international-clubs-uefa-conference-league",
         "international-clubs-conmebol-libertadores-knockout-stage",
         "international-clubs-conmebol-sudamericana-knockout-stage",
+        "chile-primera-division",
+        "ecuador-serie-a",
+        "bolivia-division-profesional",
+        "paraguay-division-de-honor-clausura",
+        "peru-primera-division-clausura",
+        "uruguay-primera-division-clausura",
+        "venezuela-primera-division-clausura",
     }
     # La Primera B colombiana ("Torneo DIMAYOR") NO debe colarse — solo la
     # Primera A ("Liga DIMAYOR"), y USL Championship tampoco (solo MLS).
     assert "colombia-torneo-dimayor-clausura" not in football_leagues
     assert "usa-usl-championship" not in football_leagues
+    # Los slugs viejos de UEFA (con sufijo de fase) ya no deben aparecer —
+    # ver el bug corregido en el docstring de arriba.
+    assert "international-clubs-uefa-champions-league-playoff-round" not in football_leagues
+    assert "international-clubs-uefa-europa-league-playoff-round" not in football_leagues
+    assert "international-clubs-uefa-conference-league-playoff-round" not in football_leagues
 
     # basketball no debe verse afectado por el cambio de fútbol.
     assert leagues_for_sport(cfg.odds_provider, "basketball") == ["usa-nba"]
