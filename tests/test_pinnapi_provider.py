@@ -5,7 +5,7 @@ scripts/verify_pinnapi.py (2026-09-07): mercados anidados por período (solo
 que evita mezclar variantes de "Corners"/"Bookings"/mujeres/juveniles con el
 partido real."""
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -17,6 +17,7 @@ from valuebet.devig import fair_probabilities
 from valuebet.models import BookmakerMarket, Event, Outcome
 from valuebet.pinnapi_provider import (
     PinnapiProvider,
+    _to_naive_utc,
     attach_pinnacle_reference_markets,
     markets_from_pinnapi_event,
 )
@@ -59,7 +60,13 @@ def _our_event(**overrides) -> Event:
         league="England - Premier League",
         home_team="Arsenal",
         away_team="Chelsea",
-        commence_time=datetime(2026, 9, 10, 19, 0, 0),
+        # "aware" (con tzinfo=UTC) a propósito — así es como
+        # odds_provider.py::_parse_datetime construye Event.commence_time en
+        # el camino real (datetime.fromisoformat de un ISO8601 con offset).
+        # Un valor "naive" acá escondió, hasta el 2026-09-11, el bug real de
+        # `abs(aware - naive)` en attach_pinnacle_reference_markets — ver
+        # _to_naive_utc en pinnapi_provider.py.
+        commence_time=datetime(2026, 9, 10, 19, 0, 0, tzinfo=timezone.utc),
         bookmakers={},
     )
     base.update(overrides)
@@ -153,6 +160,36 @@ def test_attach_pinnacle_reference_markets_matches_by_team_and_league_allowlist(
     assert events[0].markets_for("Pinnacle", "h2h")[0].outcome_price("home") == 1.90
 
 
+def test_to_naive_utc_strips_tzinfo_and_leaves_naive_untouched():
+    aware = datetime(2026, 9, 10, 19, 0, 0, tzinfo=timezone.utc)
+    naive = datetime(2026, 9, 10, 19, 0, 0)
+
+    assert _to_naive_utc(aware) == naive
+    assert _to_naive_utc(naive) == naive
+
+
+def test_attach_pinnacle_reference_markets_does_not_crash_with_aware_commence_time():
+    """BUG REAL de producción (2026-09-11): en cuanto el fix del sport
+    (2026-09-07) dejó que este código por fin corriera sobre eventos reales,
+    reventó con `TypeError: can't subtract offset-naive and offset-aware
+    datetimes` — event.commence_time viene "aware" (con tzinfo=UTC) en el
+    camino real de odds_provider.py, mientras que _parse_starts siempre
+    entrega "naive". La excepción tumbaba TODA la llamada a
+    attach_pinnacle_reference_markets para el día completo (no solo el
+    partido problemático), así que Pinnacle terminaba sin emparejar nada de
+    todas formas, por una razón distinta a la del bug anterior. Este test
+    usa explícitamente un commence_time 'aware' (ya es el default de
+    _our_event(), pero se deja explícito acá por claridad) para que una
+    regresión futura no vuelva a colarse."""
+    events = [_our_event(commence_time=datetime(2026, 9, 10, 19, 0, 0, tzinfo=timezone.utc))]
+    pinnapi_events = [_pinnapi_event(starts="2026-09-10T19:00:00Z")]
+
+    matched = attach_pinnacle_reference_markets(events, pinnapi_events)
+
+    assert matched == 1
+    assert "Pinnacle" in events[0].bookmakers
+
+
 def test_attach_pinnacle_reference_markets_excludes_non_curated_league_variants():
     """Un partido de los MISMOS dos equipos pero listado bajo una liga fuera
     de la lista blanca (ej. "England - Premier League Corners", que en la
@@ -181,7 +218,7 @@ def test_attach_pinnacle_reference_markets_rejects_kickoff_too_far_apart():
     """Mismos equipos, misma liga, pero un kickoff a más de MAX_KICKOFF_DIFF
     de diferencia — probablemente un cruce de ida/vuelta distinto, no el
     mismo partido. No debe emparejar."""
-    events = [_our_event(commence_time=datetime(2026, 9, 10, 19, 0, 0))]
+    events = [_our_event(commence_time=datetime(2026, 9, 10, 19, 0, 0, tzinfo=timezone.utc))]
     far_event = _pinnapi_event(starts="2026-10-01T19:00:00Z")
     pinnapi_events = [far_event]
 

@@ -40,7 +40,7 @@ from __future__ import annotations
 
 import logging
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 
 import requests
@@ -256,6 +256,36 @@ def _parse_starts(value: Optional[str]) -> Optional[datetime]:
         return None
 
 
+def _to_naive_utc(dt: datetime) -> datetime:
+    """Normaliza un datetime a "naive" en UTC (sin tzinfo) para poder
+    restarlo con el resultado de `_parse_starts` (que siempre es naive).
+
+    BUG REAL de producción (2026-09-11, el primer día que el fix del sport
+    de 2026-09-07 dejó que este código por fin corriera sobre partidos
+    reales): `event.commence_time` viene de
+    `odds_provider.py::_parse_datetime`, que en el camino normal SÍ le deja
+    el tzinfo (`datetime.fromisoformat("...+00:00")` es "aware"), salvo en
+    un fallback raro (`datetime.utcnow()`, naive) si el parseo del proveedor
+    falla. Restar un datetime "aware" contra uno "naive" con `-` directo
+    lanza `TypeError: can't subtract offset-naive and offset-aware
+    datetimes` — y como esto pasaba DENTRO del bucle de emparejamiento
+    equipo-por-equipo, tumbaba con una excepción TODA la llamada a
+    `attach_pinnacle_reference_markets` para ese día completo (no solo el
+    partido problemático), cayendo de vuelta a solo Bet365 en silencio (el
+    `except Exception` de `daily.py` lo atrapa y sigue el job, pero
+    Pinnacle no emparejó nada esa corrida tampoco, por una razón distinta a
+    la del bug anterior). No se había visto nunca porque, antes del fix de
+    sport, el bucle externo (`if event.sport != "football": continue`)
+    saltaba TODOS los eventos antes de llegar a esta resta — por eso los
+    tests con un `Event.commence_time` naive escrito a mano (como
+    `_our_event()` en este archivo, antes de este fix) tampoco lo
+    detectaron: nunca ejercitaron la forma real (aware) que produce
+    `_parse_datetime` en producción."""
+    if dt.tzinfo is not None:
+        return dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
+
+
 def attach_pinnacle_reference_markets(events: List[Event], pinnapi_events: List[dict]) -> int:
     """Para cada `Event` (ya con sus cuotas de odds-api.io cargadas), busca
     el partido correspondiente en `pinnapi_events` (misma liga de la lista
@@ -283,7 +313,7 @@ def attach_pinnacle_reference_markets(events: List[Event], pinnapi_events: List[
             if not names_match(pe.get("away"), event.away_team):
                 continue
             starts = _parse_starts(pe.get("starts"))
-            if starts is not None and abs(starts - event.commence_time) > MAX_KICKOFF_DIFF:
+            if starts is not None and abs(starts - _to_naive_utc(event.commence_time)) > MAX_KICKOFF_DIFF:
                 continue
             best = pe
             break
