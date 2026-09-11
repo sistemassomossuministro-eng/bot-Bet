@@ -258,6 +258,58 @@ def test_list_events_without_leagues_makes_a_single_call_with_no_league_param():
     assert {e.event_id for e in events} == {"evt-1", "evt-2"}
 
 
+def test_list_events_sport_comes_from_the_requested_sport_not_the_raw_json():
+    """BUG REAL de producción (2026-09-07, ver doc del proyecto): Event.sport
+    se sacaba parseando el campo 'sport' de la respuesta cruda de
+    odds-api.io, un campo cuya forma/capitalización real nunca se había
+    verificado (nadie leía Event.sport hasta que se agregó Pinnacle). En
+    producción, `event.sport == "football"` (usado para filtrar en
+    pinnapi_provider.py y para contar eventos de fútbol en daily.py) dio
+    SIEMPRE 0/0 — la integración de Pinnacle nunca se activó ni una vez pese
+    a estar 'enabled: true', sin ningún error visible en el log.
+
+    Ahora `sport` lo manda quien llama (list_events/get_events_odds ya lo
+    saben con certeza, porque ellos mismos lo pidieron) y ese valor tiene
+    prioridad absoluta sobre lo que venga en el JSON — así que este test usa
+    a propósito un valor MUY distinto en el JSON ('Soccer ⚽ (raw)') para
+    probar que se ignora por completo."""
+    provider = OddsApiIoProvider(api_key="fake-key")
+    raw = dict(_event_json("evt-1"), sport="Soccer ⚽ (raw)")
+    ok_resp = _make_response(200, [raw])
+
+    with patch.object(provider._session, "get", return_value=ok_resp):
+        events = provider.list_events(sport="football", leagues=None)
+
+    assert events[0].sport == "football"
+
+
+def test_get_events_odds_sport_comes_from_the_requested_sport_not_the_raw_json():
+    """Mismo bug que el test anterior, pero para el camino real usado en
+    producción (GET /odds/multi vía get_events_odds, no /events)."""
+    provider = OddsApiIoProvider(api_key="fake-key")
+    raw = dict(_event_json("evt-1"), sport={"name": "Football (raw, distinto)"})
+    ok_resp = _make_response(200, [raw])
+
+    with patch.object(provider._session, "get", return_value=ok_resp):
+        events = provider.get_events_odds(["evt-1"], ["Betplay"], sport="football")
+
+    assert events[0].sport == "football"
+
+
+def test_get_events_odds_without_sport_kwarg_falls_back_to_parsing_raw_json():
+    """Compatibilidad hacia atrás: si quien llama NO pasa `sport` (código
+    viejo, o un caller que de verdad no lo sabe), se sigue intentando sacar
+    el valor del JSON como antes — mejor un valor best-effort que ninguno."""
+    provider = OddsApiIoProvider(api_key="fake-key")
+    raw = dict(_event_json("evt-1"), sport={"name": "football"})
+    ok_resp = _make_response(200, [raw])
+
+    with patch.object(provider._session, "get", return_value=ok_resp):
+        events = provider.get_events_odds(["evt-1"], ["Betplay"])
+
+    assert events[0].sport == "football"
+
+
 def test_list_leagues_returns_slug_list_for_plain_list_response():
     """GET /leagues?sport=football devuelve una lista plana de dicts (name/
     slug/eventsCount), igual que /events sin envoltorio 'data' — confirmado

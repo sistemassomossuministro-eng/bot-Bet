@@ -77,7 +77,7 @@ class FakeProvider:
     def get_event_odds(self, event_id, bookmakers):
         raise NotImplementedError
 
-    def get_events_odds(self, event_ids, bookmakers):
+    def get_events_odds(self, event_ids, bookmakers, sport=None):
         self.calls.append((list(event_ids), list(bookmakers)))
         events = []
         for event_id in event_ids:

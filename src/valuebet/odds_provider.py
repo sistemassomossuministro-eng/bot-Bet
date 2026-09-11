@@ -166,11 +166,19 @@ class OddsProvider(abc.ABC):
         """Devuelve un evento con las cuotas de los bookmakers solicitados."""
 
     @abc.abstractmethod
-    def get_events_odds(self, event_ids: List[str], bookmakers: List[str]) -> List[Event]:
+    def get_events_odds(
+        self, event_ids: List[str], bookmakers: List[str], sport: Optional[str] = None
+    ) -> List[Event]:
         """Igual que get_event_odds pero para muchos eventos a la vez (mismo número
         de resultados que event_ids, en lo posible) — mucho más eficiente en
         cuota de API cuando hay que cubrir cientos de partidos por día (fútbol
-        mundial, no solo una liga)."""
+        mundial, no solo una liga).
+
+        `sport`: el slug de deporte (ej. "football") que YA se usó para pedir
+        estos event_ids (ver el bucle `for sport in cfg.odds_provider.sports`
+        en daily.py/main.py). Si se pasa, tiene prioridad absoluta sobre
+        cualquier campo 'sport' que la API devuelva dentro de cada evento —
+        ver el bug real documentado en `_parse_event`."""
 
     @abc.abstractmethod
     def get_event_result(self, event_id: str) -> "EventResult":
@@ -253,7 +261,7 @@ class OddsApiIoProvider(OddsProvider):
             params = dict(base_params, limit=overall_limit)
             data = self._get("/events", params)
             raw_events = data if isinstance(data, list) else data.get("data", data.get("events", []))
-            return [self._parse_event(raw) for raw in raw_events]
+            return [self._parse_event(raw, sport=sport) for raw in raw_events]
 
         # BUG REAL detectado en producción (ago-2026): el parámetro 'league' de
         # GET /events acepta un ÚNICO string, NO una lista separada por comas —
@@ -289,7 +297,7 @@ class OddsApiIoProvider(OddsProvider):
                 continue
             raw_events = data if isinstance(data, list) else data.get("data", data.get("events", []))
             for raw in raw_events:
-                event = self._parse_event(raw)
+                event = self._parse_event(raw, sport=sport)
                 events_by_id[event.event_id] = event
             if len(events_by_id) >= overall_limit:
                 break
@@ -301,10 +309,16 @@ class OddsApiIoProvider(OddsProvider):
         data = self._get("/odds", params)
         return self._parse_event(data)
 
-    def get_events_odds(self, event_ids: List[str], bookmakers: List[str]) -> List[Event]:
+    def get_events_odds(
+        self, event_ids: List[str], bookmakers: List[str], sport: Optional[str] = None
+    ) -> List[Event]:
         """Usa GET /odds/multi (hasta 10 event ids por llamada) para no gastar
         una consulta de API por cada partido — imprescindible cuando se cubre
         fútbol mundial y puede haber cientos de partidos en la ventana del día.
+
+        `sport`: ver el docstring del mismo parámetro en la interfaz abstracta
+        — se propaga tal cual a `_parse_event` para que `Event.sport` sea
+        siempre el slug que configuramos, nunca un valor adivinado del JSON.
         """
         events: List[Event] = []
         bookmakers_param = ",".join(bookmakers)
@@ -314,7 +328,7 @@ class OddsApiIoProvider(OddsProvider):
             data = self._get("/odds/multi", params)
             raw_events = data if isinstance(data, list) else data.get("data", data.get("events", []))
             for raw in raw_events:
-                events.append(self._parse_event(raw))
+                events.append(self._parse_event(raw, sport=sport))
         return events
 
     def list_leagues(self, sport: str) -> List[dict]:
@@ -349,7 +363,7 @@ class OddsApiIoProvider(OddsProvider):
         )
 
     @staticmethod
-    def _parse_event(raw: dict) -> Event:
+    def _parse_event(raw: dict, sport: Optional[str] = None) -> Event:
         bookmakers_raw: Dict[str, list] = raw.get("bookmakers", {}) or {}
         bookmakers: Dict[str, List[BookmakerMarket]] = {}
         for bk_name, markets in bookmakers_raw.items():
@@ -370,7 +384,28 @@ class OddsApiIoProvider(OddsProvider):
                         )
             bookmakers[bk_name] = parsed_markets
 
-        sport = raw.get("sport", {}).get("name", "") if isinstance(raw.get("sport"), dict) else str(raw.get("sport", ""))
+        # BUG REAL detectado en producción (2026-09-07, ver doc del proyecto):
+        # antes, `sport` SIEMPRE se sacaba de este parseo del campo 'sport' de
+        # la respuesta cruda de odds-api.io — un campo cuya forma/capitalización
+        # real NUNCA se había verificado contra la API (nadie leía `Event.sport`
+        # hasta que se agregó la integración de Pinnacle). En producción, esa
+        # comparación (`event.sport == "football"`, usada tanto para filtrar
+        # en pinnapi_provider.py como para contar eventos de fútbol en
+        # daily.py) dio 0/0 SIEMPRE — la integración de Pinnacle nunca llegó
+        # a activarse ni una sola vez pese a estar 'enabled: true', y el job
+        # seguía 100% con Bet365 en silencio (sin ningún error/warning
+        # visible). Ahora, si quien llama YA sabe con certeza qué deporte pidió
+        # (list_events/get_events_odds lo saben porque ellos mismos lo
+        # mandaron como parámetro `sport` de la query), ese valor manda
+        # siempre y no se intenta adivinar nada del JSON. El parseo del campo
+        # 'sport' de la respuesta solo se usa como último recurso si de verdad
+        # no hay otra forma de saberlo.
+        if sport is None:
+            sport = (
+                raw.get("sport", {}).get("name", "")
+                if isinstance(raw.get("sport"), dict)
+                else str(raw.get("sport", ""))
+            )
         league = raw.get("league", {}).get("name", "") if isinstance(raw.get("league"), dict) else str(raw.get("league", ""))
 
         return Event(

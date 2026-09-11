@@ -53,7 +53,7 @@ class FakeProviderFull:
     def get_event_odds(self, event_id, bookmakers):
         return self._today_event
 
-    def get_events_odds(self, event_ids, bookmakers):
+    def get_events_odds(self, event_ids, bookmakers, sport=None):
         return [self._today_event for _ in event_ids]
 
     def get_event_result(self, event_id):

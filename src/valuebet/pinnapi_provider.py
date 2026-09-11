@@ -151,38 +151,67 @@ class PinnapiProvider:
         return data.get("events", []) if isinstance(data, dict) else []
 
 
-def _totals_outcomes(totals: dict) -> List[Outcome]:
-    """Convierte el dict 'totals' de pinnapi a Outcomes con el mismo formato
-    de nombre que usa el resto del proyecto ('over_<punto>'/'under_<punto>',
-    ver odds_provider.py). Para un punto que es un número entero (ej. 2, no
-    2.5), pinnapi lo entrega como int en el JSON ("2": {"points": 2, ...}) —
-    no sabemos con certeza si odds-api.io formatearía ese mismo punto como
-    "over_2" o "over_2.0" (no se verificó ese caso puntual contra una
-    respuesta real de odds-api.io). Para que el cruce de nombres entre
-    proveedores (ver value_finder.py, que compara por IGUALDAD EXACTA de
-    string) no falle en silencio solo por este detalle de formato, se
-    generan AMBAS variantes apuntando al mismo precio — inofensivo (una
-    entrada de más en la lista de outcomes) y evita perder cobertura de
-    Pinnacle en líneas de gol enteras por un detalle de formato."""
-    outcomes: List[Outcome] = []
+def _totals_markets(totals: dict) -> List[BookmakerMarket]:
+    """Convierte el dict 'totals' de pinnapi en una lista de BookmakerMarket
+    'totals', UNO POR LÍNEA DE PUNTOS — igual que odds_provider.py::
+    _parse_event, que también arma un BookmakerMarket separado por línea
+    (ver el comentario grande en ese archivo). NUNCA un solo mercado
+    combinado con todas las líneas juntas.
+
+    BUG REAL evitado acá (encontrado el 2026-09-07, antes de que llegara a
+    afectar picks reales — ver el estado del proyecto para el detalle
+    completo): la primera versión de este módulo metía TODAS las líneas de
+    puntos (over_0.5/under_0.5, over_1/under_1, ..., over_5.5/under_5.5,
+    típicamente 10-15 líneas) en UN SOLO BookmakerMarket. value_finder.py
+    asume que cualquier BookmakerMarket que le pase a fair_probabilities()
+    es un conjunto mutuamente excluyente y EXHAUSTIVO de resultados de UNA
+    sola apuesta (ej. "más/menos de 3 goles" — exactamente 2 resultados que
+    suman ~100%+margen) — eso es lo que permite tratar 1/precio como
+    probabilidad "justa" tras normalizar. Juntar 10-15 líneas rompe esa
+    premisa: la suma de probabilidades implícitas se dispara a ~10-15x el
+    vig normal, así que la fair_probability de CUALQUIER línea de totals de
+    Pinnacle salía artificialmente minúscula. Esto no fabrica EV positivo
+    falso — al contrario, aplasta en silencio EV real cada vez que Pinnacle
+    fuera el libro de referencia usado para un pick de totals (ver
+    find_value_bets_in_event / 'full_ref_market').
+
+    Para una línea de punto entero (ej. "3", no "3.5"), pinnapi la entrega
+    como int en el JSON. No sabemos con certeza si odds-api.io formatearía
+    ese mismo punto para Betplay/Bet365 como "over_3" o "over_3.0" (no
+    verificado contra una respuesta real). En vez de meter 'over_3' Y
+    'over_3.0' en el MISMO mercado (que tendría el mismo problema en
+    miniatura: 3 outcomes en vez de 2, sesgando el devig de esa única
+    línea), se devuelven DOS mercados clon — uno por cada formato de
+    nombre — cada uno con exactamente los 2 outcomes de esa línea. Así,
+    sea cual sea el formato real, value_finder.py siempre encuentra un
+    mercado de 2 outcomes válido, nunca uno inflado."""
+    markets: List[BookmakerMarket] = []
     for line in totals.values():
         if not isinstance(line, dict):
             continue
         points = line.get("points")
-        if points is None:
+        over = line.get("over")
+        under = line.get("under")
+        if points is None or not isinstance(over, (int, float)) or not isinstance(under, (int, float)):
             continue
+
         point_strs = {str(points)}
         if isinstance(points, (int, float)) and float(points) == int(points):
             point_strs.add(str(float(points)))  # ej. "2" y "2.0"
 
-        over = line.get("over")
-        under = line.get("under")
         for point_str in point_strs:
-            if isinstance(over, (int, float)):
-                outcomes.append(Outcome(name=f"over_{point_str}", price_decimal=float(over)))
-            if isinstance(under, (int, float)):
-                outcomes.append(Outcome(name=f"under_{point_str}", price_decimal=float(under)))
-    return outcomes
+            markets.append(
+                BookmakerMarket(
+                    bookmaker="Pinnacle",
+                    market_key="totals",
+                    updated_at=None,
+                    outcomes=[
+                        Outcome(name=f"over_{point_str}", price_decimal=float(over)),
+                        Outcome(name=f"under_{point_str}", price_decimal=float(under)),
+                    ],
+                )
+            )
+    return markets
 
 
 def _h2h_outcomes(money_line: dict) -> List[Outcome]:
@@ -213,9 +242,7 @@ def markets_from_pinnapi_event(pinnapi_event: dict) -> List[BookmakerMarket]:
 
     totals = period_0.get("totals")
     if isinstance(totals, dict):
-        totals_outcomes = _totals_outcomes(totals)
-        if totals_outcomes:
-            markets.append(BookmakerMarket(bookmaker="Pinnacle", market_key="totals", updated_at=None, outcomes=totals_outcomes))
+        markets.extend(_totals_markets(totals))
 
     return markets
 

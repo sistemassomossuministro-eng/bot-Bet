@@ -48,7 +48,7 @@ def run_cycle(cfg, provider, storage, alerter) -> int:
             # Lote de hasta 10 eventos por request (GET /odds/multi) en vez de
             # una request por partido — con cobertura mundial puede haber
             # cientos de partidos por ciclo.
-            events_with_odds.extend(provider.get_events_odds(event_ids, all_target_and_ref))
+            events_with_odds.extend(provider.get_events_odds(event_ids, all_target_and_ref, sport=sport))
         except Exception:
             logger.exception("Fallo al obtener cuotas en lote para '%s' (%d eventos)", sport, len(event_ids))
 
