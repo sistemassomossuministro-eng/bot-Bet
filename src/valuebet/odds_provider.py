@@ -144,6 +144,44 @@ def _parse_datetime(value: Optional[str]) -> Optional[datetime]:
         return None
 
 
+def _parse_retry_after_seconds(value: Optional[str], default: float = 5.0) -> float:
+    """Convierte el header 'x-ratelimit-reset' de un 429 a segundos de espera.
+
+    BUG REAL de producción (2026-09-11): el código asumía, sin haberlo
+    verificado nunca contra una respuesta 429 real, que este header siempre
+    era un entero de segundos a esperar (`int(value)`). La primera vez que
+    el usuario de verdad alcanzó el límite del plan gratis de odds-api.io
+    (corriendo el bot manualmente varias veces seguidas en poco tiempo), el
+    valor real resultó ser un timestamp ISO8601 ABSOLUTO en UTC (ej.
+    '2026-09-11T02:34:58Z' — la hora en la que el límite se reinicia), no
+    una cantidad de segundos. `int('2026-09-11T02:34:58Z')` revienta con
+    ValueError — y como eso pasaba DENTRO del manejo de 429 (que se supone
+    debería ser el camino MÁS tolerante a fallos de toda `_get`), la
+    excepción escapaba sin que ningún `except requests.RequestException`
+    la atrapara, tumbando la consulta de ESA liga por completo. Con las ~27
+    ligas configuradas todas rate-limitadas a la vez, la corrida entera
+    terminó en 0 eventos, 0 candidatos, 0 picks — sin una sola cuota real
+    de por medio.
+
+    Se soportan ambos formatos (entero de segundos y timestamp ISO8601
+    absoluto) por si algún endpoint de verdad manda el primero — y
+    cualquier valor que no encaje en ninguno de los dos cae al default en
+    vez de reventar: un header de rate limit mal formado nunca debería
+    tumbar la consulta completa."""
+    if not value:
+        return default
+    try:
+        return float(int(value))
+    except (TypeError, ValueError):
+        pass
+    try:
+        reset_at = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return default
+    now = datetime.now(reset_at.tzinfo) if reset_at.tzinfo is not None else datetime.utcnow()
+    return max((reset_at - now).total_seconds(), 0.0)
+
+
 class OddsProvider(abc.ABC):
     """Interfaz que debe cumplir cualquier proveedor de datos de cuotas."""
 
@@ -214,8 +252,8 @@ class OddsApiIoProvider(OddsProvider):
             try:
                 resp = self._session.get(url, params=params, timeout=self.timeout)
                 if resp.status_code == 429:
-                    wait = int(resp.headers.get("x-ratelimit-reset", 5)) or 5
-                    logger.warning("Rate limit alcanzado, esperando %ss (intento %s)", wait, attempt)
+                    wait = _parse_retry_after_seconds(resp.headers.get("x-ratelimit-reset"))
+                    logger.warning("Rate limit alcanzado, esperando %.0fs (intento %s)", wait, attempt)
                     time.sleep(min(wait, 60))
                     continue
                 if resp.status_code >= 400:

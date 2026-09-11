@@ -9,12 +9,18 @@ el cuerpo de la respuesta para que el motivo quede en el log de GitHub
 Actions sin tener que reproducir el problema a mano.
 """
 import sys
+from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from valuebet.odds_provider import OddsApiIoProvider, _normalize_market_key, _parse_odds_line
+from valuebet.odds_provider import (
+    OddsApiIoProvider,
+    _normalize_market_key,
+    _parse_odds_line,
+    _parse_retry_after_seconds,
+)
 
 MINIMAL_EVENT_TEMPLATE = {
     "sport": {"name": "football"},
@@ -90,6 +96,48 @@ def test_get_retries_on_429_rate_limit():
 
     assert data == {"ok": True}
     assert mock_get.call_count == 2
+
+
+def test_get_retries_on_429_with_real_iso8601_reset_header():
+    """BUG REAL de producción (2026-09-11): el header 'x-ratelimit-reset'
+    real de odds-api.io no es un entero de segundos como se asumía sin
+    verificar — es un timestamp ISO8601 absoluto (ej.
+    '2026-09-11T02:34:58Z', visto por primera vez cuando el usuario de
+    verdad alcanzó el límite del plan gratis corriendo el bot manualmente
+    varias veces seguidas). `int('2026-09-11T02:34:58Z')` reventaba con
+    ValueError DENTRO del manejo de 429 — la excepción no era un
+    `requests.RequestException`, así que escapaba de `_get` sin
+    reintentar, tumbando la consulta de esa liga por completo. Con las ~27
+    ligas del proyecto todas rate-limitadas a la vez, la corrida entera
+    terminaba en 0 eventos / 0 picks."""
+    provider = OddsApiIoProvider(api_key="fake-key")
+    rate_limited = _make_response(429, text="rate limited")
+    # Timestamp en el futuro cercano — el valor real observado en producción.
+    rate_limited.headers = {"x-ratelimit-reset": "2026-09-11T02:34:58Z"}
+    ok_resp = _make_response(200, {"ok": True})
+
+    with patch.object(provider._session, "get", side_effect=[rate_limited, ok_resp]) as mock_get, \
+         patch("valuebet.odds_provider.time.sleep") as mock_sleep:
+        data = provider._get("/events")
+
+    assert data == {"ok": True}
+    assert mock_get.call_count == 2
+    # No debe reventar, y debe dormir un tiempo >= 0 (capado a 60s por _get).
+    assert mock_sleep.call_count == 1
+    assert mock_sleep.call_args[0][0] >= 0
+
+
+def test_parse_retry_after_seconds_handles_plain_int_and_iso8601_and_garbage():
+    assert _parse_retry_after_seconds("5") == 5.0
+    assert _parse_retry_after_seconds(None) == 5.0  # default
+    assert _parse_retry_after_seconds("no-es-nada-valido") == 5.0  # default, nunca revienta
+
+    future = (datetime.utcnow() + timedelta(seconds=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    seconds = _parse_retry_after_seconds(future)
+    assert 25 <= seconds <= 35  # tolerancia por el tiempo que toma correr el test
+
+    past = (datetime.utcnow() - timedelta(seconds=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    assert _parse_retry_after_seconds(past) == 0.0  # nunca negativo
 
 
 def test_parse_odds_line_totals_without_hdp_is_discarded():
