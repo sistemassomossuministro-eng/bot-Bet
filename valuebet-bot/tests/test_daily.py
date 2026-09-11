@@ -458,11 +458,80 @@ def test_log_near_miss_summary_reports_best_candidate_and_below_count():
     with patch("valuebet.daily.logger") as mock_logger:
         _log_near_miss_summary(near_misses, min_ev_pct=3.0)
 
-    assert mock_logger.info.call_count == 1
     logged_text = " ".join(str(call) for call in mock_logger.info.call_args_list)
     assert "3" in logged_text  # 3 candidatos evaluados
     assert "Junior vs Tolima" in logged_text  # el mejor EV real
-    assert "2.60" in logged_text or "2.6" in logged_text
+
+
+def test_log_near_miss_summary_breaks_down_ev_by_market():
+    """Motivado por una pregunta real del usuario (2026-09-09): "solo me
+    salen picks de más/menos goles, nunca de ganador/perdedor/empate". El
+    resumen de un solo "mejor candidato del día" no alcanza para saber si
+    h2h de verdad nunca se acerca al mínimo o si totals simplemente le gana
+    por EV ese día en particular — hace falta el mejor EV de CADA mercado
+    por separado, en una línea aparte por mercado, ordenadas alfabéticamente
+    y sin inventar una línea para un mercado que no tuvo ningún candidato en
+    rango ese día."""
+    near_misses = [
+        NearMiss(
+            event_label="Millonarios vs Nacional",
+            market_key="h2h",
+            selection="home",
+            bookmaker="Betplay",
+            offered_odds=2.30,
+            ev_pct=0.8,
+        ),
+        NearMiss(
+            event_label="Junior vs Tolima",
+            market_key="h2h",
+            selection="away",
+            bookmaker="Betplay",
+            offered_odds=4.10,
+            ev_pct=1.6,  # mejor EV de h2h ese día — sigue bajo el mínimo
+        ),
+        NearMiss(
+            event_label="America vs Cali",
+            market_key="totals",
+            selection="over_2.5",
+            bookmaker="Betplay",
+            offered_odds=1.90,
+            ev_pct=5.7,  # mejor EV de totals ese día — sí supera el mínimo
+        ),
+        NearMiss(
+            event_label="Bucaramanga vs Pasto",
+            market_key="btts",
+            selection="yes",
+            bookmaker="Betplay",
+            offered_odds=1.75,
+            ev_pct=2.1,  # único candidato de btts ese día
+        ),
+    ]
+
+    with patch("valuebet.daily.logger") as mock_logger:
+        _log_near_miss_summary(near_misses, min_ev_pct=3.0)
+
+    # 1 línea de resumen general + 1 línea por cada uno de los 3 mercados presentes.
+    assert mock_logger.info.call_count == 4
+
+    per_market_calls = mock_logger.info.call_args_list[1:]
+    logged_by_call = [call.args[0] % call.args[1:] for call in per_market_calls]
+
+    h2h_line = next(line for line in logged_by_call if "h2h" in line)
+    assert "2 candidato" in h2h_line
+    assert "Junior vs Tolima" in h2h_line
+    assert "1.60" in h2h_line
+
+    totals_line = next(line for line in logged_by_call if "totals" in line)
+    assert "1 candidato" in totals_line
+    assert "America vs Cali" in totals_line
+    assert "5.70" in totals_line
+
+    btts_line = next(line for line in logged_by_call if "btts" in line)
+    assert "1 candidato" in btts_line
+    assert "Bucaramanga vs Pasto" in btts_line
+
+    # Orden alfabético: btts, h2h, totals.
+    assert [line.strip().split(":")[0].replace("· ", "") for line in logged_by_call] == ["btts", "h2h", "totals"]
 
 
 def test_generate_daily_picks_logs_near_miss_summary_when_zero_picks():

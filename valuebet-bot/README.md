@@ -423,6 +423,35 @@ siguiente ajuste correcto es bajar un poco `min_ev_pct`; si ronda 0% o
 negativo, el problema no es el umbral sino la calibración misma (o hace
 falta más volumen de partidos, no más tolerancia de EV).
 
+**Desglose por mercado (2026-09-09)**: el resumen general de arriba solo
+muestra el mejor candidato de TODO el día, sin distinguir mercados — no
+alcanza para responder algo como "¿por qué solo salen picks de totals y
+nunca de h2h (1X2)?", porque "0 picks de h2h" se ve igual si h2h de verdad
+nunca tiene candidatos en rango de cuota ese día, si sí tiene candidatos
+pero ninguno se acerca al mínimo, o si simplemente totals le ganó por EV esa
+corrida en particular. Por eso, además de la línea general,
+`_log_near_miss_summary` ahora agrega una línea por mercado (`h2h`, `totals`,
+`btts`, ordenadas alfabéticamente) con su propio conteo de candidatos y su
+propio mejor EV real — solo aparecen los mercados que de verdad tuvieron al
+menos un candidato dentro del rango de cuota ese día (nunca se inventa una
+línea de "0 candidatos" para un mercado ausente). La motivación fue una
+pregunta real del usuario: llevaba varios días viendo solo picks de
+"más/menos goles" y nunca de ganador/perdedor/empate. La hipótesis de
+trabajo (aún sin confirmar con datos reales) es que h2h es un mercado mucho
+más líquido/eficiente — Betplay y Bet365 suelen estar casi alineados en
+1X2 — mientras que `totals` tiene muchas líneas de puntos distintas por
+partido, cada una una oportunidad independiente de desalineación; con este
+desglose, el próximo log ya trae el dato real para confirmar o descartar
+esa hipótesis en vez de especular.
+
+**"Doble oportunidad" (1X, X2, 12) no está implementado.** El proyecto solo
+soporta `h2h` (1X2), `totals` y `btts` (ver `allowed_markets` más abajo) —
+si nunca ves un pick de doble oportunidad no es un bug, es que ese mercado
+todavía no existe en el código. Agregarlo requeriría antes verificar contra
+una respuesta real de odds-api.io cómo se llama exactamente ese mercado
+para Betplay (nunca se adivina el nombre de un campo de una API externa,
+ver `_MARKET_NAME_MAP` en `odds_provider.py`) y cómo se liquida.
+
 **Lo que este filtro NO resuelve**: la propuesta original también incluía
 comparar la probabilidad del modelo contra un consenso de varias casas sin
 margen — eso ahora mismo no es viable con el plan gratuito de odds-api.io,

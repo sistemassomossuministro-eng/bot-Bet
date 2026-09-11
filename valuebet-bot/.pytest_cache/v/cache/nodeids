@@ -42,6 +42,7 @@
   "tests/test_daily.py::test_generate_daily_picks_prefers_pinnacle_over_bet365_when_matched",
   "tests/test_daily.py::test_generate_daily_picks_restricts_leagues_per_sport_only",
   "tests/test_daily.py::test_generate_daily_picks_warns_if_pinnacle_enabled_but_no_football_events_counted",
+  "tests/test_daily.py::test_log_near_miss_summary_breaks_down_ev_by_market",
   "tests/test_daily.py::test_log_near_miss_summary_reports_best_candidate_and_below_count",
   "tests/test_daily.py::test_log_near_miss_summary_with_empty_list",
   "tests/test_daily.py::test_select_daily_picks_diversifies_by_event",

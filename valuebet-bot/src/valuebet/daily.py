@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 from datetime import date, datetime, timedelta
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from .config import AppConfig, leagues_for_sport
 from .models import Event, ValueBet
@@ -31,14 +31,22 @@ def bogota_today() -> date:
 def _log_near_miss_summary(near_misses: List[NearMiss], min_ev_pct: float) -> None:
     """Resume, en una sola línea INFO, qué tan cerca estuvo del mínimo exigido
     el mejor candidato real evaluado dentro del rango de cuota — aunque haya
-    terminado en 0 picks.
+    terminado en 0 picks. Además, desde el 2026-09-09, agrega una línea por
+    mercado (h2h/totals/btts/...) con su propio mejor EV.
 
     Se agregó (2026-08-29) tras varios días seguidos en 0 picks y subir
     `max_odds` dos veces sin resultado: sin esto, el log solo decía "0/10
     picks", sin decir si los candidatos que sí cayeron en rango se quedaron
     rozando el 3.0% de EV o muy lejos — cualquier ajuste de min_odds/
     max_odds/min_ev_pct se hacía a ciegas. Con esto, la próxima decisión de
-    ajuste se toma con el EV real más alto encontrado ese día, no adivinando."""
+    ajuste se toma con el EV real más alto encontrado ese día, no adivinando.
+
+    El desglose por mercado se agregó porque el resumen de un solo "mejor
+    candidato del día" no distingue "h2h nunca tiene candidatos" de "h2h sí
+    tiene candidatos pero ninguno se acerca al mínimo" de "hoy simplemente
+    ganó totals por EV, pero h2h estuvo cerca" — las tres se ven idénticas
+    en el resumen general (0 picks de h2h), y sin esto había que adivinar
+    cuál de las tres estaba pasando en vez de leerlo directo del log."""
     if not near_misses:
         logger.info(
             "Ningún candidato cayó dentro del rango de cuota configurado (min_odds/max_odds) hoy — "
@@ -62,6 +70,29 @@ def _log_near_miss_summary(near_misses: List[NearMiss], min_ev_pct: float) -> No
         best.offered_odds,
         best.bookmaker,
     )
+
+    # Desglose por mercado — solo aparecen los mercados que de verdad tuvieron
+    # al menos un candidato dentro del rango de cuota ese día (nunca se
+    # inventa una línea "0 candidatos" para un mercado ausente).
+    by_market: Dict[str, List[NearMiss]] = {}
+    for nm in near_misses:
+        by_market.setdefault(nm.market_key, []).append(nm)
+
+    for market_key in sorted(by_market):
+        group = by_market[market_key]
+        best_in_market = max(group, key=lambda nm: nm.ev_pct)
+        below_in_market = sum(1 for nm in group if nm.ev_pct < min_ev_pct)
+        logger.info(
+            "  · %s: %d candidato(s) (%d no llegaron al mínimo) — mejor EV %.2f%% — %s · %s @ %.2f (%s).",
+            market_key,
+            len(group),
+            below_in_market,
+            best_in_market.ev_pct,
+            best_in_market.event_label,
+            best_in_market.selection,
+            best_in_market.offered_odds,
+            best_in_market.bookmaker,
+        )
 
 
 def select_daily_picks(
