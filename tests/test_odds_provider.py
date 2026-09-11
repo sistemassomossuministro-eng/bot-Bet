@@ -13,6 +13,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from valuebet.odds_provider import (
@@ -98,7 +100,7 @@ def test_get_retries_on_429_rate_limit():
     assert mock_get.call_count == 2
 
 
-def test_get_retries_on_429_with_real_iso8601_reset_header():
+def test_get_retries_on_429_with_real_iso8601_reset_header_when_wait_is_short():
     """BUG REAL de producción (2026-09-11): el header 'x-ratelimit-reset'
     real de odds-api.io no es un entero de segundos como se asumía sin
     verificar — es un timestamp ISO8601 absoluto (ej.
@@ -109,11 +111,17 @@ def test_get_retries_on_429_with_real_iso8601_reset_header():
     `requests.RequestException`, así que escapaba de `_get` sin
     reintentar, tumbando la consulta de esa liga por completo. Con las ~27
     ligas del proyecto todas rate-limitadas a la vez, la corrida entera
-    terminaba en 0 eventos / 0 picks."""
+    terminaba en 0 eventos / 0 picks.
+
+    Este test usa un timestamp calculado dinámicamente (pocos segundos en
+    el futuro) para que siga siendo válido sin importar cuándo se corra, y
+    para quedar POR DEBAJO de _MAX_RATE_LIMIT_WAIT_TO_RETRY_SECONDS — es
+    decir, prueba que el reintento normal (con sleep) se preserva cuando
+    el rate limit real se libera pronto."""
     provider = OddsApiIoProvider(api_key="fake-key")
     rate_limited = _make_response(429, text="rate limited")
-    # Timestamp en el futuro cercano — el valor real observado en producción.
-    rate_limited.headers = {"x-ratelimit-reset": "2026-09-11T02:34:58Z"}
+    soon = (datetime.utcnow() + timedelta(seconds=5)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    rate_limited.headers = {"x-ratelimit-reset": soon}
     ok_resp = _make_response(200, {"ok": True})
 
     with patch.object(provider._session, "get", side_effect=[rate_limited, ok_resp]) as mock_get, \
@@ -122,9 +130,35 @@ def test_get_retries_on_429_with_real_iso8601_reset_header():
 
     assert data == {"ok": True}
     assert mock_get.call_count == 2
-    # No debe reventar, y debe dormir un tiempo >= 0 (capado a 60s por _get).
+    # No debe reventar, y debe dormir un tiempo corto (no capado artificialmente).
     assert mock_sleep.call_count == 1
-    assert mock_sleep.call_args[0][0] >= 0
+    assert 0 <= mock_sleep.call_args[0][0] <= 10
+
+
+def test_get_fails_fast_without_retrying_when_real_rate_limit_wait_is_long():
+    """MEJORA REAL de producción (2026-09-11): tras arreglar el ValueError de
+    arriba, el usuario reportó que la corrida se estaba tardando mucho —
+    con un rate limit real que tardaba ~1700s en liberarse, el código
+    seguía reintentando 3 veces por liga (con sleep de hasta 60s cada vez),
+    desperdiciando minutos por cada una de las ~27+ ligas configuradas, aun
+    sabiendo que reintentar DENTRO de la misma corrida no podía tener éxito
+    hasta que pasara el tiempo real de reinicio. Ahora, si el tiempo de
+    espera real supera _MAX_RATE_LIMIT_WAIT_TO_RETRY_SECONDS, `_get` falla
+    de inmediato (sin dormir, sin reintentar) para que el llamador pueda
+    seguir con la siguiente liga sin perder tiempo."""
+    provider = OddsApiIoProvider(api_key="fake-key")
+    rate_limited = _make_response(429, text="rate limited")
+    far_future = (datetime.utcnow() + timedelta(minutes=29)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    rate_limited.headers = {"x-ratelimit-reset": far_future}
+
+    with patch.object(provider._session, "get", return_value=rate_limited) as mock_get, \
+         patch("valuebet.odds_provider.time.sleep") as mock_sleep:
+        with pytest.raises(RuntimeError):
+            provider._get("/events")
+
+    # Falla en el primer intento, sin dormir y sin reintentar.
+    assert mock_get.call_count == 1
+    mock_sleep.assert_not_called()
 
 
 def test_parse_retry_after_seconds_handles_plain_int_and_iso8601_and_garbage():

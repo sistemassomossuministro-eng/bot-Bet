@@ -81,6 +81,21 @@ def _normalize_market_key(raw_name: str) -> str:
 # odds-api.io (docs.odds-api.io/api-reference/openapi.json, ago-2026).
 _NON_OUTCOME_KEYS = {"hdp", "point", "max", "updatedAt"}
 
+# Tope de espera real (según el header 'x-ratelimit-reset', ya parseado por
+# _parse_retry_after_seconds) por debajo del cual SÍ vale la pena reintentar
+# la misma llamada dentro de esta corrida. Bug real de producción
+# (2026-09-11, el mismo día que se corrigió el parseo del header): antes de
+# esto, un 429 con reinicio real de ~29 minutos (visto en producción)
+# igual reintentaba 3 veces durmiendo `min(wait, 60)` cada vez — ~3 minutos
+# perdidos POR LIGA sin ninguna chance real de éxito, y con ~27 ligas +
+# NBA + el batch de cuotas todos rate-limitados a la vez (mismo API key),
+# eso se multiplicaba a decenas de minutos de una corrida que de todas
+# formas iba a terminar en 0 eventos. Por encima de este tope no se
+# reintenta — se falla rápido, igual que ya se hacía para un 4xx que no es
+# 429 (ver el 'break' de abajo), y el resto del job sigue con la siguiente
+# liga sin esperar en vano.
+_MAX_RATE_LIMIT_WAIT_TO_RETRY_SECONDS = 30.0
+
 
 def _parse_odds_line(line: dict, market_key: Optional[str] = None) -> List[Outcome]:
     """Convierte un dict de una línea de cuotas (ej. {'home': '2.10', 'draw': '3.40', 'away': '3.20'})
@@ -253,8 +268,22 @@ class OddsApiIoProvider(OddsProvider):
                 resp = self._session.get(url, params=params, timeout=self.timeout)
                 if resp.status_code == 429:
                     wait = _parse_retry_after_seconds(resp.headers.get("x-ratelimit-reset"))
+                    if wait > _MAX_RATE_LIMIT_WAIT_TO_RETRY_SECONDS:
+                        # El límite real tarda demasiado en liberarse como para
+                        # que valga la pena reintentar AHORA — ver el comentario
+                        # de _MAX_RATE_LIMIT_WAIT_TO_RETRY_SECONDS arriba.
+                        logger.warning(
+                            "Rate limit alcanzado en %s y el reinicio real tarda %.0fs "
+                            "(más del margen de %.0fs) — no se reintenta esta llamada, se sigue con lo demás.",
+                            url,
+                            wait,
+                            _MAX_RATE_LIMIT_WAIT_TO_RETRY_SECONDS,
+                        )
+                        raise RuntimeError(
+                            f"Rate limit de {url} — se libera en {wait:.0f}s, no se reintenta esta corrida"
+                        )
                     logger.warning("Rate limit alcanzado, esperando %.0fs (intento %s)", wait, attempt)
-                    time.sleep(min(wait, 60))
+                    time.sleep(wait)
                     continue
                 if resp.status_code >= 400:
                     # Sin esto, un 400 solo deja "Bad Request" en el log — sin decir
