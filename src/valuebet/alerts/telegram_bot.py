@@ -13,6 +13,7 @@ Cómo crear un bot y obtener bot_token / chat_id:
 """
 from __future__ import annotations
 
+import html
 import logging
 from typing import List, Optional
 
@@ -22,6 +23,55 @@ from ..descriptions import describe_selection
 from ..models import ValueBet
 
 logger = logging.getLogger(__name__)
+
+# Límite duro de la API de Telegram para sendMessage (4096 caracteres) — no
+# documentado en ningún lugar del código hasta ahora porque nunca se había
+# generado un mensaje que se le acercara. Se deja margen (no se usa el límite
+# exacto) para no rozarlo con la variación normal de nombres de equipo/liga.
+_TELEGRAM_SAFE_MESSAGE_LENGTH = 3500
+
+
+def _esc(value: object) -> str:
+    """Escapa '<', '>' y '&' antes de meter un texto en un mensaje con
+    parse_mode='HTML'.
+
+    INCIDENTE REAL de producción (2026-09-12): el primer día que el bot
+    generó 10 picks reales de golpe (tras arreglar Pinnacle + el rate
+    limit), el envío a Telegram falló con '400 Bad Request'. El log de esa
+    corrida no incluía el cuerpo de la respuesta de Telegram (ya corregido,
+    ver `send()`/`send_photo()` abajo), así que la causa EXACTA de esa
+    corrida puntual no quedó confirmada — pero nombres de equipo/liga
+    (odds-api.io) y notas de PlayerElo/lesiones (API-Football) nunca se
+    habían sometido a un mensaje HTML-parseado con contenido real tan
+    variado, y cualquiera de ellos con un '&', '<' o '>' literal (nunca
+    verificado que no pueda pasar) rompe el parser de Telegram y tumba el
+    mensaje ENTERO, no solo esa línea — es un riesgo real e independiente
+    de si fue o no la causa de ESTE incidente puntual. Nunca se debe confiar
+    en que un nombre externo viene "limpio" de HTML.
+    """
+    return html.escape(str(value), quote=False)
+
+
+def _chunk_pick_blocks(blocks: List[str], max_chars: int) -> List[List[str]]:
+    """Agrupa bloques de texto (un pick ya formateado cada uno) en listas que,
+    unidas con '\\n', no superen `max_chars` — sin partir ningún bloque a la
+    mitad. Nunca devuelve una lista vacía de chunks (al menos uno, aunque
+    venga vacío), para que el llamador siempre tenga al menos un mensaje que
+    mandar."""
+    chunks: List[List[str]] = []
+    current: List[str] = []
+    current_len = 0
+    for block in blocks:
+        block_len = len(block) + 1  # +1 por el "\n" que lo une al resto
+        if current and current_len + block_len > max_chars:
+            chunks.append(current)
+            current = []
+            current_len = 0
+        current.append(block)
+        current_len += block_len
+    if current or not chunks:
+        chunks.append(current)
+    return chunks
 
 
 class TelegramAlerter:
@@ -42,6 +92,13 @@ class TelegramAlerter:
                 json={"chat_id": self.chat_id, "text": text, "parse_mode": "HTML"},
                 timeout=self.timeout,
             )
+            if resp.status_code >= 400:
+                # Sin esto, un 400 solo deja "400 Bad Request" en el log, sin
+                # el campo "description" de Telegram que dice la razón real
+                # (ej. "message is too long" vs. "can't parse entities: ...").
+                # Truncado por si acaso, para no inflar el log con un cuerpo
+                # gigante en un caso raro.
+                logger.warning("Respuesta %s de Telegram sendMessage: %s", resp.status_code, resp.text[:500])
             resp.raise_for_status()
             return True
         except requests.RequestException as exc:
@@ -57,6 +114,8 @@ class TelegramAlerter:
                     files={"photo": f},
                     timeout=self.timeout,
                 )
+            if resp.status_code >= 400:
+                logger.warning("Respuesta %s de Telegram sendPhoto: %s", resp.status_code, resp.text[:500])
             resp.raise_for_status()
             return True
         except (requests.RequestException, OSError) as exc:
@@ -72,10 +131,10 @@ class TelegramAlerter:
         text = (
             f"{header}\n"
             f"{id_line}"
-            f"{vb.event.label()}\n"
+            f"{_esc(vb.event.label())}\n"
             f"Inicia: {vb.event.commence_time.strftime('%Y-%m-%d %H:%M UTC')}\n\n"
-            f"Apuesta: <b>{vb.description()}</b>\n"
-            f"Casa: <b>{vb.bookmaker}</b> @ {vb.offered_odds:.2f}\n"
+            f"Apuesta: <b>{_esc(vb.description())}</b>\n"
+            f"Casa: <b>{_esc(vb.bookmaker)}</b> @ {vb.offered_odds:.2f}\n"
             f"Prob. justa estimada: {vb.fair_probability*100:.1f}%\n"
             f"EV estimado: <b>{vb.ev_pct:.2f}%</b>\n"
             f"{stake_line}"
@@ -103,16 +162,16 @@ class TelegramAlerter:
         # config.example.yaml, leagues_by_sport) y este mensaje debe seguir
         # siendo correcto sin importar cuáles picks entraron hoy.
         bookmaker_links = bookmaker_links or {}
-        lines = [f"🎯 <b>Pronósticos del día — {pick_date_str}</b>", f"{len(picks)} picks\n"]
+        pick_blocks = []
         for i, vb in enumerate(picks, start=1):
             link = bookmaker_links.get(vb.bookmaker)
             # Enlace opcional: solo aparece si TÚ lo configuraste con tu propia
             # URL verificada (odds_provider.bookmaker_links) — nunca se adivina
             # ni se genera automáticamente, ver la nota de seguridad en el README.
-            casa = f'<a href="{link}">{vb.bookmaker}</a>' if link else vb.bookmaker
+            casa = f'<a href="{html.escape(link, quote=True)}">{_esc(vb.bookmaker)}</a>' if link else _esc(vb.bookmaker)
             pick_lines = [
-                f"{i}. <b>{vb.event.label()}</b>",
-                f"   {vb.description()} @ {vb.offered_odds:.2f} ({casa})",
+                f"{i}. <b>{_esc(vb.event.label())}</b>",
+                f"   {_esc(vb.description())} @ {vb.offered_odds:.2f} ({casa})",
                 f"   EV: <b>+{vb.ev_pct:.1f}%</b>",
             ]
             # Señales secundarias (ver secondary_signals.py) — puramente
@@ -120,16 +179,40 @@ class TelegramAlerter:
             # están activadas Y se pudo emparejar el partido/equipo por
             # nombre contra PlayerElo/API-Football (ver team_match.py).
             if vb.playerelo_note:
-                pick_lines.append(f"   🔎 {vb.playerelo_note}")
+                pick_lines.append(f"   🔎 {_esc(vb.playerelo_note)}")
             if vb.injury_notes:
                 for note in vb.injury_notes:
-                    pick_lines.append(f"   🩹 {note}")
-            lines.append("\n".join(pick_lines))
-        lines.append(
+                    pick_lines.append(f"   🩹 {_esc(note)}")
+            pick_blocks.append("\n".join(pick_lines))
+
+        footer = (
             "\nAnálisis estadístico automatizado — no coloca apuestas por ti. "
             "Verifica la cuota vigente antes de decidir. Juega con responsabilidad."
         )
-        return self.send("\n".join(lines))
+
+        # INCIDENTE REAL de producción (2026-09-12): el primer día con 10
+        # picks reales de golpe, Telegram rechazó el mensaje con 400 Bad
+        # Request (ver `_esc()` arriba sobre por qué no se pudo confirmar la
+        # causa exacta de ESE incidente). El límite de 4096 caracteres de
+        # sendMessage es un riesgo real e independiente que también hay que
+        # cubrir — nunca se había topado antes porque nunca había pasado de
+        # ~4 picks reales por día.
+        # Si no cabe en un solo mensaje, se manda en varias partes, cada una
+        # con su propio encabezado "(parte N/M)", sin cortar un pick a la
+        # mitad entre dos mensajes.
+        chunks = _chunk_pick_blocks(pick_blocks, _TELEGRAM_SAFE_MESSAGE_LENGTH - len(footer))
+        total_parts = len(chunks)
+        ok = True
+        for part_num, chunk_blocks in enumerate(chunks, start=1):
+            part_suffix = f" (parte {part_num}/{total_parts})" if total_parts > 1 else ""
+            lines = [f"🎯 <b>Pronósticos del día — {pick_date_str}</b>{part_suffix}"]
+            if part_num == 1:
+                lines.append(f"{len(picks)} picks\n")
+            lines.extend(chunk_blocks)
+            if part_num == total_parts:
+                lines.append(footer)
+            ok = self.send("\n".join(lines)) and ok
+        return ok
 
     def send_daily_results_message(self, pick_date_str: str, settled_rows: list, summary: dict) -> bool:
         if not settled_rows:
@@ -152,7 +235,7 @@ class TelegramAlerter:
             # la cuota de cierre antes del partido — no siempre va a estar.
             closing = row["closing_odds"] if "closing_odds" in row.keys() else None
             clv_txt = f" · CLV {clv_pct(row['offered_odds'], closing):+.1f}%" if closing else ""
-            lines.append(f"{mark} {row['event_label']} — {desc} @ {row['offered_odds']:.2f}{score}{clv_txt}")
+            lines.append(f"{mark} {_esc(row['event_label'])} — {_esc(desc)} @ {row['offered_odds']:.2f}{score}{clv_txt}")
         hit_rate = summary.get("hit_rate_pct")
         hit_rate_txt = f"{hit_rate:.0f}%" if hit_rate is not None else "s/d"
         lines.append(
