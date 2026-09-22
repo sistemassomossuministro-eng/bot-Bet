@@ -541,11 +541,44 @@ ya pasaron el filtro de EV mínimo, ANTES de `select_daily_picks` — así el
 "top N" no se llena con lo que en la práctica es una sola posición.
 
 **Lo que NO se toca**: el lado contrario de `totals` (over vs. under) y
-cualquier otro mercado del mismo partido (h2h, btts) son apuestas
-genuinamente distintas — no están tan correlacionadas con el total de
-goles como para tratarlas igual, así que se mantienen todas si tienen
-valor. En el caso real de arriba, el resultado correcto queda en 2 picks:
-la línea de totals menos extrema (más de 3.75) + "ambos anotan".
+`btts` del mismo partido son apuestas genuinamente distintas — no están tan
+correlacionadas con el total de goles como para tratarlas igual, así que se
+mantienen todas si tienen valor. En el caso real de arriba, el resultado
+correcto queda en 2 picks: la línea de totals menos extrema (más de 3.75) +
+"ambos anotan". (El mercado `h2h` del mismo partido tiene su propia lógica
+de colapso — ver el siguiente punto.)
+
+### Picks h2h contradictorios del mismo partido: solo el de mayor probabilidad
+
+**Caso real reportado por el usuario (2026-09-22)**: en algunos partidos el
+motor encontraba valor en DOS resultados de `h2h` a la vez — por ejemplo
+"gana Nacional" Y "gana América" del mismo partido Nacional vs América.
+Tiene sentido matemáticamente (cada resultado se compara contra su propia
+cuota justa por separado), pero son mutuamente excluyentes por definición:
+solo uno puede pasar. Para alguien que quiere medir rentabilidad mensual
+sobre las recomendaciones y decidir si apostarles, tener los dos picks del
+mismo partido es contraproducente — no se puede apostar a ambos a la vez
+sin garantizar una pérdida en uno de los dos.
+
+`value_finder.py::collapse_correlated_h2h` corrige esto: cuando el motor
+encuentra valor en más de un resultado de `h2h` del mismo partido, se queda
+solo con el de **mayor `fair_probability`** (la probabilidad "justa" que el
+propio modelo calcula al devigar contra el libro de referencia — Pinnacle o
+Bet365) y descarta el resto, con un log INFO explicando cuál se quedó y
+cuáles se descartaron. Se aplica en `generate_daily_picks`, justo después
+de `collapse_correlated_totals` y con el mismo criterio de "antes de
+`select_daily_picks`".
+
+**Por qué `fair_probability` y no la cuota ofrecida ni el EV**: se eligió
+a propósito la probabilidad "justa" estimada por el modelo, no la cuota más
+baja (esa solo refleja el precio de la casa objetivo — Betplay —, no la
+estimación real del modelo) ni el EV más alto (el EV mide rentabilidad
+esperada, no probabilidad de ganar: un resultado menos probable puede tener
+EV mayor solo por pagar más cuota — de hecho es común que el resultado
+"menos probable" tenga MÁS EV, precisamente porque paga más). Como el
+objetivo del usuario es medir rentabilidad real apostando a las
+recomendaciones, importa más quedarse con el resultado que de verdad es más
+probable que ocurra que con el que matemáticamente "rinde más" en el papel.
 
 ## Cómo funciona el ciclo diario
 

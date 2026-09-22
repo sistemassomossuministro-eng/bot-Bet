@@ -8,16 +8,17 @@ from valuebet.kelly import BankrollLimits
 from valuebet.models import BookmakerMarket, Event, Outcome, ValueBet
 from valuebet.value_finder import (
     NearMiss,
+    collapse_correlated_h2h,
     collapse_correlated_totals,
     find_value_bets,
     find_value_bets_in_event,
 )
 
 
-def make_vb_for_collapse(event_id, market_key, selection, ev_pct) -> ValueBet:
-    """Helper mínimo para probar collapse_correlated_totals sin pasar por
-    todo el pipeline de devig — solo importan event_id, market_key,
-    selection y ev_pct para esta lógica."""
+def make_vb_for_collapse(event_id, market_key, selection, ev_pct, fair_probability=0.5) -> ValueBet:
+    """Helper mínimo para probar collapse_correlated_totals/collapse_correlated_h2h
+    sin pasar por todo el pipeline de devig — solo importan event_id,
+    market_key, selection, ev_pct y (para h2h) fair_probability."""
     event = Event(
         event_id=event_id,
         sport="football",
@@ -33,7 +34,7 @@ def make_vb_for_collapse(event_id, market_key, selection, ev_pct) -> ValueBet:
         selection=selection,
         bookmaker="Betplay",
         offered_odds=2.10,
-        fair_probability=0.5,
+        fair_probability=fair_probability,
         ev_pct=ev_pct,
         reference_bookmakers=["Pinnacle"],
     )
@@ -597,3 +598,81 @@ def test_collapse_correlated_totals_single_entry_passes_through():
     result = collapse_correlated_totals(candidates)
     assert len(result) == 1
     assert result[0].selection == "over_2.5"
+
+
+def test_collapse_correlated_h2h_keeps_highest_fair_probability():
+    """Caso real reportado por el usuario (2026-09-22): Nacional vs América
+    con un pick a favor de cada equipo (ambos con EV positivo, ambos del
+    mismo partido). Debe quedar solo el de mayor probabilidad 'justa'
+    estimada — a propósito NO el de mayor EV (aquí 'away' tiene más EV pero
+    menos probabilidad de ganar, sería la elección incorrecta)."""
+    candidates = [
+        make_vb_for_collapse("evt1", "h2h", "home", ev_pct=4.0, fair_probability=0.55),
+        make_vb_for_collapse("evt1", "h2h", "away", ev_pct=9.0, fair_probability=0.30),
+    ]
+
+    result = collapse_correlated_h2h(candidates)
+
+    assert len(result) == 1
+    assert result[0].selection == "home"
+    assert result[0].fair_probability == 0.55
+
+
+def test_collapse_correlated_h2h_handles_three_way_market():
+    """El mercado h2h tiene 3 resultados posibles (home/draw/away) — si el
+    motor encuentra valor en los 3 a la vez, debe quedarse con el de mayor
+    probabilidad justa, sin importar el orden en que llegan."""
+    candidates = [
+        make_vb_for_collapse("evt1", "h2h", "away", ev_pct=5.0, fair_probability=0.20),
+        make_vb_for_collapse("evt1", "h2h", "draw", ev_pct=6.0, fair_probability=0.25),
+        make_vb_for_collapse("evt1", "h2h", "home", ev_pct=4.0, fair_probability=0.50),
+    ]
+
+    result = collapse_correlated_h2h(candidates)
+
+    assert len(result) == 1
+    assert result[0].selection == "home"
+
+
+def test_collapse_correlated_h2h_keeps_other_markets_untouched():
+    """No debe tocar 'totals' ni 'btts' del mismo partido — solo colapsa
+    dentro de 'h2h'."""
+    candidates = [
+        make_vb_for_collapse("evt1", "h2h", "home", ev_pct=4.0, fair_probability=0.55),
+        make_vb_for_collapse("evt1", "h2h", "away", ev_pct=9.0, fair_probability=0.30),
+        make_vb_for_collapse("evt1", "totals", "over_2.5", ev_pct=3.5),
+        make_vb_for_collapse("evt1", "btts", "yes", ev_pct=3.2),
+    ]
+
+    result = collapse_correlated_h2h(candidates)
+    selections = {(vb.market_key, vb.selection) for vb in result}
+
+    assert selections == {
+        ("h2h", "home"),
+        ("totals", "over_2.5"),
+        ("btts", "yes"),
+    }
+
+
+def test_collapse_correlated_h2h_does_not_merge_different_events():
+    """Dos partidos distintos, cada uno con 2 resultados h2h con valor — no
+    deben mezclarse, cada partido colapsa por separado."""
+    candidates = [
+        make_vb_for_collapse("evt1", "h2h", "home", ev_pct=4.0, fair_probability=0.55),
+        make_vb_for_collapse("evt1", "h2h", "away", ev_pct=9.0, fair_probability=0.30),
+        make_vb_for_collapse("evt2", "h2h", "home", ev_pct=5.0, fair_probability=0.35),
+        make_vb_for_collapse("evt2", "h2h", "away", ev_pct=6.0, fair_probability=0.45),
+    ]
+
+    result = collapse_correlated_h2h(candidates)
+    by_event = {(vb.event.event_id, vb.selection) for vb in result}
+
+    assert by_event == {("evt1", "home"), ("evt2", "away")}
+
+
+def test_collapse_correlated_h2h_single_entry_passes_through():
+    """Un solo resultado h2h con valor en el partido no debe verse afectado."""
+    candidates = [make_vb_for_collapse("evt1", "h2h", "home", ev_pct=4.0, fair_probability=0.55)]
+    result = collapse_correlated_h2h(candidates)
+    assert len(result) == 1
+    assert result[0].selection == "home"

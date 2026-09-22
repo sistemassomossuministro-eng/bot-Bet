@@ -339,3 +339,64 @@ def collapse_correlated_totals(value_bets: List[ValueBet]) -> List[ValueBet]:
 
     collapsed.sort(key=lambda vb: vb.ev_pct, reverse=True)
     return collapsed
+
+
+def collapse_correlated_h2h(value_bets: List[ValueBet]) -> List[ValueBet]:
+    """Dentro de un mismo partido, el mercado 'h2h' (1X2) es mutuamente
+    excluyente por definición — solo uno de "gana local", "empate" o "gana
+    visitante" puede pasar — pero el motor puede encontrar valor en más de
+    uno de esos resultados a la vez (ej. "gana Nacional" Y "gana América" del
+    mismo partido Nacional vs América), porque cada uno se compara contra su
+    propia cuota justa por separado. Recomendar los dos a la vez no tiene
+    sentido para un apostador real: solo puede pasar uno.
+
+    Pedido explícito del usuario (2026-09-22): quiere medir rentabilidad
+    mensual sobre las recomendaciones para decidir si apostarles, así que
+    necesita UN pick por partido en h2h, no dos que se cancelan entre sí.
+    Se queda con el resultado de MAYOR `fair_probability` — la probabilidad
+    "justa" que el propio modelo calcula al devigar contra el libro de
+    referencia (Pinnacle/Bet365) — porque es la medida directa de "mayor
+    probabilidad de éxito". A propósito NO se usa la cuota ofrecida más baja
+    (solo refleja el precio de la casa objetivo, no la estimación del
+    modelo) ni el EV más alto (mide rentabilidad esperada, no probabilidad
+    de ganar: un resultado menos probable puede tener EV mayor por pagar
+    más cuota).
+
+    Otros mercados del mismo partido (totals, btts) NO se tocan acá — cada
+    uno tiene su propia lógica de colapso o ninguna (ver
+    collapse_correlated_totals arriba).
+
+    Se aplica sobre la lista ya filtrada por EV mínimo (después de
+    `find_value_bets`), nunca sobre `near_misses` — el log de near-misses
+    debe seguir mostrando TODO lo evaluado, sin este recorte."""
+    groups: Dict[str, List[ValueBet]] = {}
+    passthrough: List[ValueBet] = []
+
+    for vb in value_bets:
+        if vb.market_key != "h2h":
+            passthrough.append(vb)
+            continue
+        groups.setdefault(vb.event.event_id, []).append(vb)
+
+    collapsed: List[ValueBet] = list(passthrough)
+    for _event_id, entries in groups.items():
+        if len(entries) == 1:
+            collapsed.append(entries[0])
+            continue
+
+        chosen = max(entries, key=lambda vb: vb.fair_probability)
+        collapsed.append(chosen)
+        for vb in entries:
+            if vb is not chosen:
+                logger.info(
+                    "Descartado por haber otro resultado 'h2h' con mayor probabilidad de éxito en el "
+                    "mismo partido (se queda %s @ prob. justa %.1f%%, se descarta %s @ prob. justa %.1f%%): %s",
+                    chosen.selection,
+                    chosen.fair_probability * 100,
+                    vb.selection,
+                    vb.fair_probability * 100,
+                    vb.event.label(),
+                )
+
+    collapsed.sort(key=lambda vb: vb.ev_pct, reverse=True)
+    return collapsed

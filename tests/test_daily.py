@@ -675,6 +675,83 @@ def test_generate_daily_picks_collapses_correlated_totals_lines():
         assert by_market == {("totals", "over_3.75"), ("btts", "yes")}
 
 
+class _FakeProviderWithCorrelatedH2H:
+    """Reproduce el caso real reportado por el usuario (2026-09-22): un solo
+    partido (Nacional vs América) donde el motor encuentra EV positivo tanto
+    en 'gana el local' como en 'gana el visitante' a la vez — mutuamente
+    excluyentes por definición, solo uno puede pasar. El pick de 'away' tiene
+    más EV (paga más), pero el de 'home' tiene mayor probabilidad 'justa'
+    estimada — collapse_correlated_h2h debe quedarse con 'home'. El 'draw' se
+    deja deliberadamente sin valor (cuota de Betplay por debajo de lo justo)
+    para que el caso se concentre en home vs away, igual que el ejemplo real
+    del usuario."""
+
+    def __init__(self):
+        pinnacle_h2h = BookmakerMarket(
+            bookmaker="Pinnacle",
+            market_key="h2h",
+            updated_at=None,
+            outcomes=[Outcome("home", 1.80), Outcome("draw", 3.60), Outcome("away", 4.50)],
+        )
+        betplay_h2h = BookmakerMarket(
+            bookmaker="Betplay",
+            market_key="h2h",
+            updated_at=None,
+            outcomes=[Outcome("home", 2.30), Outcome("draw", 3.00), Outcome("away", 6.00)],
+        )
+        self._event = Event(
+            event_id="nacional-america",
+            sport="football",
+            league="Colombia - Liga DIMAYOR",
+            home_team="Nacional",
+            away_team="América",
+            commence_time=datetime.utcnow() + timedelta(hours=5),
+            bookmakers={"Pinnacle": [pinnacle_h2h], "Betplay": [betplay_h2h]},
+        )
+
+    def list_events(self, sport, leagues=None, lookahead_days=3, limit=None):
+        return [self._event]
+
+    def get_events_odds(self, event_ids, bookmakers, sport=None):
+        return [self._event for _ in event_ids]
+
+    def get_event_result(self, event_id):
+        raise NotImplementedError
+
+
+def test_generate_daily_picks_collapses_correlated_h2h_picks():
+    """Caso real del usuario (2026-09-22): Nacional vs América con un pick a
+    favor de cada equipo. 'away' tiene más EV (26.3%) que 'home' (21.05%),
+    pero 'home' tiene mayor probabilidad 'justa' estimada (~52.6% vs
+    ~21.1%) — el resultado final debe ser 1 solo pick, por 'home'."""
+    with tempfile.TemporaryDirectory() as tmp:
+        storage = Storage(str(Path(tmp) / "t.db"))
+        cfg = AppConfig(
+            bankroll=BankrollLimits(total=1_000_000),
+            odds_provider=OddsProviderConfig(
+                name="odds_api_io",
+                api_key="x",
+                base_url="https://x",
+                target_bookmakers=["Betplay"],
+                reference_bookmakers=["Pinnacle"],
+                sports=["football"],
+            ),
+            value_detection=ValueDetectionConfig(min_ev_pct=1.0, allowed_markets=["h2h"]),
+            daily=DailyConfig(num_picks=10, max_picks_per_event=1),
+            telegram=None,
+            db_path="",
+            output_dir="output",
+            log_level="INFO",
+            log_file=None,
+        )
+        provider = _FakeProviderWithCorrelatedH2H()
+
+        picks = generate_daily_picks(cfg, provider, storage)
+
+        assert len(picks) == 1
+        assert picks[0].selection == "home"
+
+
 class _FakeProviderForPinnacleReference:
     """Un evento h2h con EV positivo real usando SOLO lo que vendría de
     odds-api.io (Betplay + opcionalmente Bet365) — Pinnacle NUNCA sale de

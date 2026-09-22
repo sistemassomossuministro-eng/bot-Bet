@@ -17,7 +17,7 @@ from .odds_provider import OddsProvider
 from .secondary_signals import enrich_picks_with_secondary_signals
 from .settlement import settle_selection
 from .storage.db import Storage
-from .value_finder import NearMiss, collapse_correlated_totals, find_value_bets
+from .value_finder import NearMiss, collapse_correlated_h2h, collapse_correlated_totals, find_value_bets
 
 logger = logging.getLogger(__name__)
 
@@ -329,6 +329,23 @@ def generate_daily_picks(
             "%d candidato(s) de 'totals' descartados por ser líneas más extremas que otra del mismo "
             "partido y lado ya elegida (ver detalle arriba)",
             collapsed,
+        )
+
+    # Mismo problema de fondo que collapse_correlated_totals, pero para h2h:
+    # el motor puede encontrar valor en dos resultados mutuamente excluyentes
+    # del mismo partido a la vez (ej. "gana Nacional" y "gana América" del
+    # mismo Nacional vs América) — collapse_correlated_h2h se queda con el de
+    # mayor probabilidad "justa" estimada (ver value_finder.py). Pedido
+    # explícito del usuario (2026-09-22) para poder medir rentabilidad
+    # mensual sin picks contradictorios del mismo partido.
+    before_h2h_collapse = len(candidates)
+    candidates = collapse_correlated_h2h(candidates)
+    h2h_collapsed = before_h2h_collapse - len(candidates)
+    if h2h_collapsed:
+        logger.info(
+            "%d candidato(s) de 'h2h' descartados por haber otro resultado del mismo partido con "
+            "mayor probabilidad de éxito (ver detalle arriba)",
+            h2h_collapsed,
         )
 
     # Con daily.lookahead_days > 1, un mismo partido lejano puede seguir
