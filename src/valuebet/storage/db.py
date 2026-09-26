@@ -425,6 +425,7 @@ class Storage:
                 COUNT(*) FILTER (WHERE result='won') AS won,
                 COUNT(*) FILTER (WHERE result='lost') AS lost,
                 COUNT(*) FILTER (WHERE result='push') AS push,
+                COUNT(*) FILTER (WHERE result='pending') AS pending,
                 COUNT(*) FILTER (WHERE result NOT IN ('won','lost','push')) AS other,
                 COALESCE(AVG(ev_pct), 0) AS avg_ev_pct,
                 COALESCE(SUM(CASE
@@ -451,6 +452,12 @@ class Storage:
             "won": row["won"] or 0,
             "lost": row["lost"] or 0,
             "push": row["push"] or 0,
+            # Picks todavía sin liquidar (result='pending') — subconjunto de
+            # 'other' de abajo (que además incluye 'unsupported'/
+            # 'unsettled_expired'), agregado para el dashboard diario del
+            # acumulado del mes (ver dashboard.py) sin tocar el significado
+            # de 'other' que ya usaban otros llamadores.
+            "pending": row["pending"] or 0,
             "other": row["other"] or 0,
             "avg_ev_pct": row["avg_ev_pct"] or 0.0,
             "profit_units": row["profit_units"] or 0.0,
@@ -475,6 +482,36 @@ class Storage:
             summary["year"] = year
             summary["month"] = month
             return summary
+
+    def daily_profit_series(self, year: int, month: int, through_day: int) -> list:
+        """Profit acumulado (stake plano, mismo criterio que _aggregate_picks)
+        día a día dentro de (year, month), desde el día 1 hasta `through_day`
+        inclusive — para el gráfico de evolución del dashboard diario (ver
+        dashboard.py). Un día sin picks liquidados aporta 0 al acumulado (ni
+        gana ni pierde), igual que un push o un pick aún pendiente."""
+        prefix = f"{year:04d}-{month:02d}"
+        with self._conn() as conn:
+            rows = conn.execute(
+                """
+                SELECT pick_date,
+                       COALESCE(SUM(CASE
+                           WHEN result='won' THEN offered_odds - 1
+                           WHEN result='lost' THEN -1
+                           ELSE 0
+                       END), 0) AS day_profit
+                FROM daily_picks
+                WHERE substr(pick_date, 1, 7) = ?
+                GROUP BY pick_date
+                """,
+                (prefix,),
+            ).fetchall()
+        by_day = {int(row["pick_date"][8:10]): row["day_profit"] for row in rows}
+        series = []
+        running = 0.0
+        for day in range(1, max(through_day, 0) + 1):
+            running += by_day.get(day, 0.0)
+            series.append(round(running, 4))
+        return series
 
     def recent_picks_summary(self, days: int, today: Optional[date] = None) -> dict:
         """Resumen de ventana móvil de los últimos `days` días (hasta hoy

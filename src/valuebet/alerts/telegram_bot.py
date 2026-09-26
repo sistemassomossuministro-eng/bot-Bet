@@ -261,6 +261,37 @@ class TelegramAlerter:
 
         return self.send("\n".join(lines))
 
+    def send_daily_dashboard_message(self, month_label_str: str, today, summary: dict, status: str) -> bool:
+        """Acumulado del MES EN CURSO, mandado todos los días junto con la
+        corrida normal (a diferencia de send_monthly_summary_message, que
+        solo corre el día 1 sobre el mes ya cerrado) — ver dashboard.py."""
+        header = "📈 <b>Acumulado de " + month_label_str + "</b>"
+        veredicto = {
+            "profitable": "✅ <b>VAS RENTABLE</b>",
+            "negative": "❌ <b>VAS EN NEGATIVO</b>",
+            "neutral": "➖ <b>AÚN SIN RESULTADOS DECIDIDOS</b>",
+        }[status]
+        hit_rate = summary.get("hit_rate_pct")
+        hit_rate_txt = f"{hit_rate:.1f}%" if hit_rate is not None else "s/d"
+        roi = summary.get("roi_pct")
+        roi_txt = f"{roi:+.1f}%" if roi is not None else "s/d"
+        profit = summary.get("profit_units", 0.0)
+        text = (
+            f"{header}\n"
+            f"Corte: {today.day:02d}/{today.month:02d}/{today.year}\n\n"
+            f"{veredicto}\n\n"
+            f"Total de picks: {summary.get('total', 0)}\n"
+            f"Ganados: {summary.get('won', 0)} · Perdidos: {summary.get('lost', 0)} · "
+            f"Pendientes: {summary.get('pending', 0)}\n"
+            f"Tasa de acierto: {hit_rate_txt}\n"
+            f"Profit (stake plano de 1 unidad por pick): <b>{profit:+.2f}u</b>\n"
+            f"ROI del mes: <b>{roi_txt}</b>\n\n"
+            f"Este cálculo asume 1 unidad apostada por pick — no es tu resultado "
+            f"real de dinero si apostaste montos distintos o no tomaste todos los "
+            f"picks. Análisis estadístico, no garantía de resultados futuros."
+        )
+        return self.send(text)
+
     def send_monthly_summary_message(self, month_label_str: str, summary: dict, is_profitable: bool) -> bool:
         header = "📅 <b>Resumen mensual — " + month_label_str + "</b>"
         veredicto = "✅ <b>MES RENTABLE</b>" if is_profitable else "❌ <b>MES NO RENTABLE</b>"

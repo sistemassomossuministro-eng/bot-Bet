@@ -70,6 +70,7 @@ class RecordingAlerter:
     def __init__(self):
         self.picks_calls = []
         self.results_calls = []
+        self.dashboard_calls = []
 
     def send_daily_picks_message(self, pick_date_str, picks, bookmaker_links=None):
         self.picks_calls.append((pick_date_str, picks, bookmaker_links))
@@ -77,6 +78,10 @@ class RecordingAlerter:
 
     def send_daily_results_message(self, pick_date_str, settled_rows, summary):
         self.results_calls.append((pick_date_str, settled_rows, summary))
+        return True
+
+    def send_daily_dashboard_message(self, month_label_str, today, summary, status):
+        self.dashboard_calls.append((month_label_str, today, summary, status))
         return True
 
     def send_photo(self, path, caption=None):
@@ -146,6 +151,10 @@ def test_run_daily_job_passes_bookmaker_links_and_recent_window():
         _, _, summary = alerter.results_calls[0]
         assert "recent_window" in summary
         assert summary["recent_window"]["days"] == 30
+
+        # Dashboard del acumulado del mes en curso: se manda todos los días,
+        # no solo el día 1 (a diferencia del resumen mensual) — ver dashboard.py.
+        assert len(alerter.dashboard_calls) == 1
 
 
 def test_run_daily_job_end_to_end_without_telegram():
@@ -223,6 +232,7 @@ def test_run_daily_job_end_to_end_without_telegram():
         # Las imágenes deben haberse generado en disco.
         assert (Path(output_dir) / "latest_results.png").exists()
         assert (Path(output_dir) / "latest_picks.png").exists()
+        assert (Path(output_dir) / "latest_dashboard.png").exists()
 
         # Instagram no estaba configurado (telegram/instagram=None): no debe
         # haberse escrito ningún manifiesto de publicación.

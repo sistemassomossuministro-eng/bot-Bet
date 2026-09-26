@@ -6,6 +6,10 @@ Hace, en orden:
      por Telegram junto con la imagen para redes sociales.
   2. Si hoy es día 1 del mes, genera y envía el resumen del mes que acaba de
      terminar (total de picks, ganados/perdidos, y si fue rentable o no).
+  2.5. Genera y envía por Telegram el dashboard del acumulado del MES EN
+     CURSO (picks, ganados/perdidos/pendientes, tasa de acierto, profit, ROI
+     y su evolución día a día) — a diferencia del punto anterior, esto corre
+     TODOS los días, no solo el día 1 (ver dashboard.py).
   3. Genera los picks de hoy (top N por EV, de los deportes configurados) y los envía por Telegram
      junto con la imagen para redes sociales.
   4. Si Instagram está configurado, encola en un manifiesto JSON (output/) las
@@ -26,6 +30,7 @@ from .branding import BRAND_NAME
 from .clv import clv_pct
 from .config import load_config, setup_logging
 from .daily import bogota_today, generate_daily_picks, settle_pending_daily_picks
+from .dashboard import generate_daily_dashboard
 from .descriptions import describe_selection
 from .monthly import generate_monthly_summary_if_due
 from .odds_provider import build_provider
@@ -140,6 +145,15 @@ def run_daily_job(cfg, provider, storage, alerter) -> None:
     # Va después de liquidar "ayer" a propósito: si ayer fue el último día del
     # mes pasado, ya quedó liquidado arriba antes de calcular el resumen.
     generate_monthly_summary_if_due(cfg, storage, alerter, today, instagram_queue=instagram_queue)
+
+    # 2.5) Dashboard del acumulado del MES EN CURSO — a diferencia del punto
+    # anterior, esto corre TODOS los días (no solo el día 1), pedido
+    # explícito del usuario para medir rentabilidad sin esperar a fin de mes.
+    # Va después de liquidar "ayer" (para reflejar ya sus resultados) y antes
+    # de generar los picks de hoy (el "pendientes" de este corte no incluye
+    # todavía los picks que se generan en el paso 3). Solo Telegram por ahora
+    # — no se encola para Instagram, no fue pedido.
+    generate_daily_dashboard(cfg, storage, alerter, today)
 
     # 3) Generar los picks de hoy.
     picks = generate_daily_picks(cfg, provider, storage, today)

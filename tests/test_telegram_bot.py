@@ -165,6 +165,40 @@ def test_monthly_summary_message_omits_clv_without_sample():
     assert "CLV promedio" not in text
 
 
+def test_daily_dashboard_message_reports_pending_and_status():
+    from datetime import date
+
+    alerter = _alerter()
+    summary = {
+        "total": 34, "won": 19, "lost": 12, "pending": 3,
+        "hit_rate_pct": 61.3, "roi_pct": 20.6, "profit_units": 6.4,
+    }
+
+    alerter.send_daily_dashboard_message("Septiembre 2026", date(2026, 9, 26), summary, "profitable")
+
+    text = alerter.send.call_args[0][0]
+    assert "Acumulado de Septiembre 2026" in text
+    assert "VAS RENTABLE" in text
+    assert "Pendientes: 3" in text
+    assert "26/09/2026" in text
+
+
+def test_daily_dashboard_message_neutral_status_when_nothing_decided():
+    from datetime import date
+
+    alerter = _alerter()
+    summary = {
+        "total": 2, "won": 0, "lost": 0, "pending": 2,
+        "hit_rate_pct": None, "roi_pct": None, "profit_units": 0.0,
+    }
+
+    alerter.send_daily_dashboard_message("Septiembre 2026", date(2026, 9, 2), summary, "neutral")
+
+    text = alerter.send.call_args[0][0]
+    assert "AÚN SIN RESULTADOS DECIDIDOS" in text
+    assert "s/d" in text
+
+
 def test_daily_picks_message_escapes_html_special_chars_in_team_names():
     """INCIDENTE REAL (2026-09-12): el primer día con 10 picks reales,
     Telegram rechazó el mensaje con 400 Bad Request. Nunca se había

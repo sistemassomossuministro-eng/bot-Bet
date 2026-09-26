@@ -653,6 +653,37 @@ Se guarda como `output/latest_monthly_summary.png` y se envía por Telegram.
 Si un mes no tuvo ningún pick registrado, simplemente se omite (no se manda
 un resumen vacío).
 
+## Dashboard diario del acumulado del mes
+
+A diferencia del resumen mensual de arriba (que solo corre el día 1 y resume
+el mes que YA CERRÓ), `daily_job.py` también genera y envía **todos los
+días** un dashboard con cómo va el **mes en curso** hasta hoy
+(`valuebet/dashboard.py`) — pedido explícito del usuario para poder medir
+rentabilidad real antes de decidir si apostarle dinero real a las
+recomendaciones, sin tener que esperar a fin de mes:
+
+- **Total de picks**, **ganados**, **perdidos** y **pendientes** (los que
+  todavía no se liquidan) del mes en curso.
+- **Tasa de acierto**, **profit** y **ROI** (mismo supuesto de stake plano de
+  1 unidad por pick que el resumen mensual, ver arriba).
+- **CLV promedio**, solo si ya se capturó el cierre de al menos 1 pick del
+  mes (igual que en el resumen mensual).
+- Un **gráfico de evolución del profit acumulado día a día** del mes, con
+  línea base en cero y el valor del último día marcado.
+- Un banner de estado con tres posibles lecturas — a diferencia del resumen
+  mensual (que solo distingue rentable/no rentable, razonable sobre un mes ya
+  cerrado), acá a principios de mes lo normal es no tener ningún pick
+  decidido todavía, y forzar "no rentable" ahí sería engañoso:
+  - **"VAS RENTABLE"** (verde) — profit > 0 con al menos un pick decidido.
+  - **"VAS EN NEGATIVO"** (rojo) — profit < 0 con al menos un pick decidido.
+  - **"AÚN SIN RESULTADOS"** (gris) — todavía no hay ningún pick ganado ni
+    perdido este mes (todos pendientes, o el mes recién empieza).
+
+Se guarda como `output/latest_dashboard.png` y se envía por Telegram junto
+con el resto de la corrida diaria — no se encola para Instagram (no fue
+pedido; el resumen mensual sigue siendo la única pieza mensual que sí se
+publica ahí).
+
 ## Closing Line Value (CLV): validar si hay valor real, sin esperar meses
 
 El acierto/fallo de picks individuales no dice mucho por sí solo — con EV de

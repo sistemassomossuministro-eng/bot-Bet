@@ -227,3 +227,57 @@ def test_recent_daily_pick_event_ids_empty_when_nothing_stored():
     with tempfile.TemporaryDirectory() as tmp:
         storage = Storage(str(Path(tmp) / "test.db"))
         assert storage.recent_daily_pick_event_ids("2026-08-01") == set()
+
+
+def test_monthly_picks_summary_reports_pending_separately_from_other():
+    """El dashboard diario (ver dashboard.py) necesita distinguir 'pendiente
+    de liquidar' de 'other' (que también incluye unsupported/expirado) —
+    agregado junto con esa feature (2026-09-26)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        storage = Storage(str(Path(tmp) / "test.db"))
+        storage.add_daily_pick("2026-09-10", make_value_bet(event_id="e1"))
+        storage.add_daily_pick("2026-09-11", make_value_bet(event_id="e2"))
+        row = storage.list_picks_for_date("2026-09-11")[0]
+        storage.settle_daily_pick(row["id"], "won", 2, 0)
+
+        summary = storage.monthly_picks_summary(2026, 9)
+        assert summary["total"] == 2
+        assert summary["won"] == 1
+        assert summary["pending"] == 1
+
+
+def test_daily_profit_series_accumulates_by_pick_date_within_month():
+    with tempfile.TemporaryDirectory() as tmp:
+        storage = Storage(str(Path(tmp) / "test.db"))
+
+        # Día 1: gana a 2.00 -> +1.0u. Día 2: pierde -> -1.0u (vuelve a 0).
+        # Día 3: sin picks (no debe romper la serie, aporta 0). Día 5: gana a
+        # 1.50 -> +0.5u.
+        storage.add_daily_pick("2026-09-01", make_value_bet(event_id="e1", odds=2.00))
+        storage.settle_daily_pick(storage.list_picks_for_date("2026-09-01")[0]["id"], "won", 2, 0)
+
+        storage.add_daily_pick("2026-09-02", make_value_bet(event_id="e2", odds=2.00))
+        storage.settle_daily_pick(storage.list_picks_for_date("2026-09-02")[0]["id"], "lost", 0, 1)
+
+        storage.add_daily_pick("2026-09-05", make_value_bet(event_id="e3", odds=1.50))
+        storage.settle_daily_pick(storage.list_picks_for_date("2026-09-05")[0]["id"], "won", 1, 0)
+
+        series = storage.daily_profit_series(2026, 9, through_day=5)
+
+        assert series == [1.0, 0.0, 0.0, 0.0, 0.5]
+
+
+def test_daily_profit_series_pending_pick_contributes_zero():
+    with tempfile.TemporaryDirectory() as tmp:
+        storage = Storage(str(Path(tmp) / "test.db"))
+        storage.add_daily_pick("2026-09-01", make_value_bet(event_id="e1", odds=3.00))  # nunca se liquida
+
+        series = storage.daily_profit_series(2026, 9, through_day=3)
+
+        assert series == [0.0, 0.0, 0.0]
+
+
+def test_daily_profit_series_empty_month_returns_zeros():
+    with tempfile.TemporaryDirectory() as tmp:
+        storage = Storage(str(Path(tmp) / "test.db"))
+        assert storage.daily_profit_series(2026, 9, through_day=4) == [0.0, 0.0, 0.0, 0.0]

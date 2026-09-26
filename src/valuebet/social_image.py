@@ -262,16 +262,30 @@ def _wrap_text(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageFont, 
     return lines
 
 
-def _draw_footer(draw: ImageDraw.ImageDraw, fonts: Fonts, text: str) -> None:
+def _draw_footer(
+    draw: ImageDraw.ImageDraw,
+    fonts: Fonts,
+    text: str,
+    canvas_height: int = HEIGHT,
+    top_override: Optional[int] = None,
+) -> int:
+    """Dibuja el pie de página. Por defecto se ancla al fondo de un canvas de
+    `canvas_height` px (comportamiento de siempre, usado por las piezas
+    cuadradas 1080x1080). `top_override` lo ancla a un `y` explícito en vez
+    de calcularlo desde abajo — lo usa render_daily_dashboard_image(), cuyo
+    canvas es más alto y variable según cuánto contenido haya arriba.
+    Devuelve el `y` final tras la última línea, útil para recortar el
+    canvas al tamaño real del contenido."""
     max_width = WIDTH - 112
     lines = _wrap_text(draw, text, fonts.footer, max_width)
     line_h = fonts.footer.size + 8
-    divider_y = HEIGHT - 34 - line_h * len(lines) - 14
+    divider_y = top_override if top_override is not None else canvas_height - 34 - line_h * len(lines) - 14
     draw.line([(56, divider_y), (WIDTH - 56, divider_y)], fill=DIVIDER, width=1)
     y = divider_y + 22
     for line in lines:
         draw.text((56, y), line, font=fonts.footer, fill=TEXT_MUTED)
         y += line_h
+    return y
 
 
 DISCLAIMER = "Análisis estadístico automatizado, no es garantía de resultado. Juega con responsabilidad. +18."
@@ -320,6 +334,182 @@ def render_monthly_summary_image(month_label: str, tiles: List[StatTile], is_pro
         "Análisis estadístico, no es garantía de resultado futuro.",
     )
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    img.save(output_path, "PNG", optimize=True)
+    return output_path
+
+
+DASHBOARD_HEIGHT = 1380  # más alto que las piezas cuadradas: banner + grilla de KPIs + gráfico + footer
+
+
+def _format_units_for_chart(value: float) -> str:
+    sign = "+" if value > 0 else ("" if value < 0 else "±")
+    return f"{sign}{value:.1f}u" if value != 0 else "0.0u"
+
+
+def _gradient_color_at(y: int, canvas_height: int) -> tuple:
+    """Mismo cálculo que _vertical_gradient(), para poder pintar un 'halo'
+    detrás de un elemento (ej. la etiqueta final del gráfico) que se mezcle
+    con el fondo real en ese punto, en vez de un color plano que se note."""
+    t = max(0.0, min(1.0, y / max(canvas_height - 1, 1)))
+    r = int(BG_TOP[0] + (BG_BOTTOM[0] - BG_TOP[0]) * t)
+    g = int(BG_TOP[1] + (BG_BOTTOM[1] - BG_TOP[1]) * t)
+    b = int(BG_TOP[2] + (BG_BOTTOM[2] - BG_TOP[2]) * t)
+    return (r, g, b)
+
+
+def _draw_cumulative_chart(
+    draw: ImageDraw.ImageDraw,
+    fonts: Fonts,
+    values: List[float],
+    left: int,
+    right: int,
+    top: int,
+    bottom: int,
+    canvas_height: int = HEIGHT,
+) -> None:
+    """Evolución del profit acumulado del mes en curso, día a día — la parte
+    'dashboard' del acumulado diario (ver dashboard.py). Sigue los mark specs
+    del skill de dataviz: línea fina de una sola serie (no necesita leyenda,
+    el título ya la nombra), línea base en cero recesiva y punteada, punto
+    final redondeado con etiqueta directa — y NINGÚN otro punto etiquetado."""
+    draw.text((left, top - 44), "Evolución del profit acumulado en el mes", font=fonts.row_sub, fill=TEXT_MUTED)
+
+    if not values:
+        draw.text((left, (top + bottom) / 2), "Sin picks todavía este mes.", font=fonts.row_sub, fill=TEXT_MUTED)
+        return
+
+    n = len(values)
+    lo, hi = min(values + [0.0]), max(values + [0.0])
+    pad = max((hi - lo) * 0.15, 0.5)
+    lo -= pad
+    hi += pad
+
+    def x_at(i: int) -> float:
+        return left + (right - left) * i / max(n - 1, 1)
+
+    def y_at(v: float) -> float:
+        t = (v - lo) / (hi - lo)
+        return bottom - t * (bottom - top)
+
+    zero_y = y_at(0.0)
+    dash = 6
+    x = left
+    while x < right:
+        draw.line([(x, zero_y), (min(x + dash, right), zero_y)], fill=DIVIDER, width=1)
+        x += dash * 2
+
+    pts = [(x_at(i), y_at(v)) for i, v in enumerate(values)]
+    if len(pts) >= 2:
+        draw.line(pts, fill=HEADER_ACCENT, width=3, joint="curve")
+
+    lx, ly = pts[-1]
+
+    # La etiqueta de la línea base en cero solo se dibuja si no queda pegada
+    # a la etiqueta del punto final (caso típico a principios de mes: la
+    # serie entera está en 0.0u, ambas etiquetas dirían lo mismo en el mismo
+    # sitio) — evita el texto duplicado/superpuesto.
+    if abs(zero_y - ly) > 28:
+        zero_label = "0.0u"
+        draw.text(
+            (right - draw.textlength(zero_label, font=fonts.footer), zero_y - 24),
+            zero_label, font=fonts.footer, fill=TEXT_MUTED,
+        )
+    r = 7
+    draw.ellipse([lx - r, ly - r, lx + r, ly + r], fill=HEADER_ACCENT)
+    label = _format_units_for_chart(values[-1])
+    label_w = draw.textlength(label, font=fonts.row_main)
+    label_x = lx + 12 if lx + 12 + label_w <= right else lx - 12 - label_w
+    label_x = max(min(label_x, right - label_w), left)
+    label_y = ly - 34
+    # Halo detrás de la etiqueta (mismo tono del fondo): si la serie tiene un
+    # pico justo antes del punto final, la línea puede pasar por debajo del
+    # texto — sin esto, el número quedaría ilegible cruzado por el trazo.
+    label_h = fonts.row_main.size
+    halo_color = _gradient_color_at(label_y + label_h // 2, canvas_height)
+    draw.rounded_rectangle(
+        [label_x - 6, label_y - 4, label_x + label_w + 6, label_y + label_h + 4], radius=6, fill=halo_color
+    )
+    draw.text((label_x, label_y), label, font=fonts.row_main, fill=TEXT_PRIMARY)
+
+    draw.text((left, bottom + 10), "Día 1", font=fonts.footer, fill=TEXT_MUTED)
+    day_n_label = f"Día {n}"
+    draw.text(
+        (right - draw.textlength(day_n_label, font=fonts.footer), bottom + 10),
+        day_n_label, font=fonts.footer, fill=TEXT_MUTED,
+    )
+
+
+def render_daily_dashboard_image(
+    month_label_str: str,
+    cut_label: str,
+    tiles: List[StatTile],
+    status: str,
+    cumulative_series: List[float],
+    output_path: str,
+) -> str:
+    """Dashboard diario del acumulado del MES EN CURSO — a diferencia de
+    render_monthly_summary_image() (que resume el mes ya cerrado y solo se
+    manda el día 1), este se manda TODOS los días junto con la corrida normal
+    (pedido explícito del usuario, 2026-09-26). `tiles` ya viene armado por
+    dashboard.py. `status` es uno de 'profitable'/'negative'/'neutral' — a
+    diferencia del booleano de render_monthly_summary_image(), a mitad de mes
+    puede no haber picks decididos todavía, y forzar rentable/no-rentable con
+    profit=0 sería engañoso."""
+    fonts = Fonts.load()
+    height = DASHBOARD_HEIGHT
+    img = Image.new("RGB", (WIDTH, height), BG_TOP)
+    _vertical_gradient(img, BG_TOP, BG_BOTTOM)
+    draw = ImageDraw.Draw(img)
+
+    draw.rectangle([0, 0, WIDTH, 10], fill=HEADER_ACCENT)
+    draw_lockup(img, draw, fonts.row_main, fonts.footer, x=56, y=36, icon_size=46)
+    draw.text((56, 110), "ACUMULADO DEL MES", font=fonts.title, fill=TEXT_PRIMARY)
+    draw.text((56, 174), f"{month_label_str}  ·  {cut_label}", font=fonts.subtitle, fill=TEXT_MUTED)
+    draw.line([(56, 220), (WIDTH - 56, 220)], fill=DIVIDER, width=2)
+
+    left, right = 56, WIDTH - 56
+    banner_top, banner_h = 234, 120
+    banner_color, headline = {
+        "profitable": (BADGE_WON, "VAS RENTABLE"),
+        "negative": (BADGE_LOST, "VAS EN NEGATIVO"),
+        "neutral": (BADGE_PUSH, "AÚN SIN RESULTADOS"),
+    }[status]
+    profit_tile = next((t for t in tiles if t.label.startswith("Profit")), None)
+    roi_tile = next((t for t in tiles if t.label.startswith("ROI")), None)
+    subline = f"{profit_tile.value if profit_tile else '0.0u'}  ·  ROI {roi_tile.value if roi_tile else 's/d'}"
+
+    draw.rounded_rectangle([left, banner_top, right, banner_top + banner_h], radius=20, fill=banner_color)
+    headline_w = draw.textlength(headline, font=fonts.banner)
+    subline_w = draw.textlength(subline, font=fonts.banner_sub)
+    cx = (left + right) / 2
+    draw.text((cx - headline_w / 2, banner_top + banner_h * 0.22), headline, font=fonts.banner, fill=TEXT_PRIMARY)
+    draw.text((cx - subline_w / 2, banner_top + banner_h * 0.60), subline, font=fonts.banner_sub, fill=TEXT_PRIMARY)
+
+    grid_top = banner_top + banner_h + 36
+    row_h = 168
+    rows = -(-len(tiles) // 3)  # ceil
+    grid_bottom = grid_top + row_h * rows
+    _draw_stat_grid(draw, fonts, tiles, top=grid_top, bottom=grid_bottom, columns=3)
+
+    divider_y = grid_bottom + 18
+    draw.line([(left, divider_y), (right, divider_y)], fill=DIVIDER, width=1)
+
+    chart_top = divider_y + 30 + 44  # +44 por el título del mini-panel, ver _draw_cumulative_chart
+    chart_bottom = chart_top + 230
+    _draw_cumulative_chart(
+        draw, fonts, cumulative_series, left=left, right=right, top=chart_top, bottom=chart_bottom, canvas_height=height
+    )
+
+    footer_top = chart_bottom + 56
+    footer_end = _draw_footer(
+        draw, fonts,
+        "Cálculo con stake plano de 1 unidad por pick (no refleja tu banca real). "
+        "Análisis estadístico, no es garantía de resultado futuro.",
+        canvas_height=height, top_override=footer_top,
+    )
+
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    img = img.crop((0, 0, WIDTH, min(height, footer_end + 30)))
     img.save(output_path, "PNG", optimize=True)
     return output_path
 

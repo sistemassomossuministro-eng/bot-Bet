@@ -29,6 +29,12 @@ def month_label(year: int, month: int) -> str:
     return f"{_MESES_ES[month].capitalize()} {year}"
 
 
+def day_label(d: date) -> str:
+    """'26 de septiembre' — usado por dashboard.py para el subtítulo de
+    corte del acumulado diario."""
+    return f"{d.day} de {_MESES_ES[d.month]}"
+
+
 def previous_month(today: date) -> "tuple[int, int]":
     first_of_this_month = today.replace(day=1)
     last_day_prev_month = first_of_this_month - timedelta(days=1)
