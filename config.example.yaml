@@ -130,22 +130,46 @@ odds_provider:
       - "international-clubs-conmebol-sudamericana-knockout-stage"  # Libertadores/Sudamericana — re-verificado
                                                                       # en sep-2026, TODAVÍA con el sufijo
                                                                       # "Knockout stage" (no cambió esta vez).
+      - "international-uefa-nations-league-league-a-gr-3"   # Nations League (oct-2026, a pedido del usuario).
+      - "international-uefa-nations-league-league-b-gr-4"   # La API publica UNA entrada por GRUPO (no una por
+      - "international-uefa-nations-league-league-c-gr-2"   # torneo), y en la respuesta real de /leagues solo
+      - "international-uefa-nations-league-league-c-gr-4"   # aparecían estos grupos (UEFA: 5; CONCACAF: 9) —
+      - "international-uefa-nations-league-league-d-gr-2"   # slugs copiados tal cual, no inventados. ⚠️ Si otro
+      - "international-concacaf-nations-league-league-a-group-a"  # grupo aparece luego en
+      - "international-concacaf-nations-league-league-a-group-b"  # GET /leagues?sport=football, hay que
+      - "international-concacaf-nations-league-league-b-group-a"  # agregarlo a mano. El chequeo semanal NO
+      - "international-concacaf-nations-league-league-b-group-b"  # auto-reemplaza estos slugs (no tienen un
+      - "international-concacaf-nations-league-league-b-group-c"  # sufijo de fase conocido): si un grupo
+      - "international-concacaf-nations-league-league-b-group-d"  # desaparece al terminar la ventana de
+      - "international-concacaf-nations-league-league-c-group-a"  # partidos, el aviso semanal dirá "sin
+      - "international-concacaf-nations-league-league-c-group-b"  # candidatos" — es esperable, no un bug.
+      - "international-concacaf-nations-league-league-c-group-c"
       - "chile-primera-division"                  # Ampliación sep-2026: más ligas top de Sudamérica, mismo
-      - "ecuador-serie-a"                          # criterio que Argentina/Brasil/Colombia ya cubiertos.
-      - "bolivia-division-profesional"             # Chile y Bolivia no muestran nomenclatura Apertura/
-                                                    # Clausura en la API (temporada única aparente) — sin el
-                                                    # riesgo de arriba. Ecuador sí tiene poco volumen en el
-                                                    # snapshot (11 eventos) — vigilar si trae picks reales o
-                                                    # si es una liga con baja cobertura del proveedor.
+      - "ecuador-serie-a-championship-round"       # criterio que Argentina/Brasil/Colombia ya cubiertos.
+      - "ecuador-serie-a-qualifying-round"         # 🐛 CORREGIDO (oct-2026): el slug "ecuador-serie-a" dejó
+      - "ecuador-serie-a-relegation-round"         # de existir — la API ahora parte la Serie A de Ecuador en
+                                                    # sus fases (alerta del chequeo semanal 2026-10-04,
+                                                    # verificada contra GET /leagues?sport=football real:
+                                                    # championship-round 21 eventos, qualifying-round 8,
+                                                    # relegation-round 35). Se agregan las 3 fases para no
+                                                    # perder partidos. Mismo riesgo de cambio de fase que
+                                                    # Libertadores/UEFA — repetir la verificación cuando
+                                                    # cierre la fase vigente.
+                                                    # Bolivia (antes "bolivia-division-profesional") se
+                                                    # SACÓ: en la misma respuesta real de /leagues no hay
+                                                    # NINGUNA entrada de su primera división (solo
+                                                    # "bolivia-copa-bolivia", una copa distinta) — probable
+                                                    # receso entre torneos. Volver a agregarla cuando el
+                                                    # chequeo semanal o GET /leagues muestre de nuevo su
+                                                    # slug (sin adivinar el nombre).
       - "paraguay-division-de-honor-clausura"     # ⚠️ Paraguay, Perú, Uruguay y Venezuela SÍ muestran sufijo
       - "peru-primera-division-clausura"           # "Clausura" en el slug — mismo riesgo de Argentina/México:
       - "uruguay-primera-division-clausura"        # probablemente cambie a "Apertura" (o desaparezca) cuando
       - "venezuela-primera-division-clausura"      # termine la mitad de temporada vigente. Revisa con
                                                     # GET /leagues?sport=football si algún pick de estos 4
-                                                    # países desaparece por varios días seguidos. Uruguay y
-                                                    # Bolivia mostraban muy pocos eventos en el snapshot (10 y
-                                                    # 16 respectivamente) — puede ser solo el momento de la
-                                                    # temporada, vigilar igual que Ecuador.
+                                                    # países desaparece por varios días seguidos. Uruguay
+                                                    # muestra pocos eventos en el snapshot (13 en oct-2026)
+                                                    # — puede ser solo el momento de la temporada.
   poll_interval_seconds: 120
   lookahead_days: 3
   bookmaker_links: {}            # opcional: {"Betplay": "https://tu-url-verificada.../"} para que cada

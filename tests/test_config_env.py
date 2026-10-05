@@ -363,9 +363,24 @@ def test_example_config_football_leagues_filter():
         "international-clubs-uefa-conference-league",
         "international-clubs-conmebol-libertadores-knockout-stage",
         "international-clubs-conmebol-sudamericana-knockout-stage",
+        "international-uefa-nations-league-league-a-gr-3",
+        "international-uefa-nations-league-league-b-gr-4",
+        "international-uefa-nations-league-league-c-gr-2",
+        "international-uefa-nations-league-league-c-gr-4",
+        "international-uefa-nations-league-league-d-gr-2",
+        "international-concacaf-nations-league-league-a-group-a",
+        "international-concacaf-nations-league-league-a-group-b",
+        "international-concacaf-nations-league-league-b-group-a",
+        "international-concacaf-nations-league-league-b-group-b",
+        "international-concacaf-nations-league-league-b-group-c",
+        "international-concacaf-nations-league-league-b-group-d",
+        "international-concacaf-nations-league-league-c-group-a",
+        "international-concacaf-nations-league-league-c-group-b",
+        "international-concacaf-nations-league-league-c-group-c",
         "chile-primera-division",
-        "ecuador-serie-a",
-        "bolivia-division-profesional",
+        "ecuador-serie-a-championship-round",
+        "ecuador-serie-a-qualifying-round",
+        "ecuador-serie-a-relegation-round",
         "paraguay-division-de-honor-clausura",
         "peru-primera-division-clausura",
         "uruguay-primera-division-clausura",
@@ -380,6 +395,11 @@ def test_example_config_football_leagues_filter():
     assert "international-clubs-uefa-champions-league-playoff-round" not in football_leagues
     assert "international-clubs-uefa-europa-league-playoff-round" not in football_leagues
     assert "international-clubs-uefa-conference-league-playoff-round" not in football_leagues
+    # Oct-2026 (alerta del chequeo semanal): "ecuador-serie-a" ya no existe en
+    # la API (se partió en fases) y la primera división de Bolivia no aparece
+    # en /leagues — ninguno de los dos slugs viejos debe volver a colarse.
+    assert "ecuador-serie-a" not in football_leagues
+    assert "bolivia-division-profesional" not in football_leagues
 
     # basketball no debe verse afectado por el cambio de fútbol.
     assert leagues_for_sport(cfg.odds_provider, "basketball") == ["usa-nba"]

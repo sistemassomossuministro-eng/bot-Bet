@@ -38,6 +38,38 @@ def test_strip_phase_suffix_known_suffixes():
     )
 
 
+def test_strip_phase_suffix_qualifying_round():
+    # Caso real (oct-2026): la API partió la Serie A de Ecuador en 3 fases.
+    assert strip_phase_suffix("ecuador-serie-a-qualifying-round") == "ecuador-serie-a"
+    assert strip_phase_suffix("ecuador-serie-a-championship-round") == "ecuador-serie-a"
+    assert strip_phase_suffix("ecuador-serie-a-relegation-round") == "ecuador-serie-a"
+
+
+def test_find_slug_changes_ecuador_real_case_lists_all_three_phases_as_ambiguous():
+    # Datos reales de GET /leagues?sport=football (2026-10-04): el slug plano
+    # desapareció y quedaron 3 fases — ambiguo (no se auto-actualiza), pero
+    # ahora el aviso lista las 3 (antes omitía -qualifying-round). Bolivia no
+    # tiene ninguna entrada de primera división -> sin candidatos.
+    live = [
+        "ecuador-copa-ecuador",
+        "ecuador-serie-a-championship-round",
+        "ecuador-serie-a-qualifying-round",
+        "ecuador-serie-a-relegation-round",
+        "ecuador-serie-b-promotion-round",
+        "bolivia-copa-bolivia",
+    ]
+
+    confident, ambiguous = find_slug_changes(["ecuador-serie-a", "bolivia-division-profesional"], live)
+
+    assert confident == {}
+    assert sorted(ambiguous["ecuador-serie-a"]) == [
+        "ecuador-serie-a-championship-round",
+        "ecuador-serie-a-qualifying-round",
+        "ecuador-serie-a-relegation-round",
+    ]
+    assert ambiguous["bolivia-division-profesional"] == []
+
+
 def test_strip_phase_suffix_no_known_suffix_returns_unchanged():
     assert strip_phase_suffix("brazil-brasileiro-serie-a") == "brazil-brasileiro-serie-a"
 

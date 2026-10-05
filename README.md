@@ -62,7 +62,7 @@ Professional League) y las 7 ligas top de Sudamérica que faltaban (Chile,
 Ecuador, Bolivia, Paraguay, Perú, Uruguay, Venezuela) — con eso, los 10
 países miembro de CONMEBOL ya tienen su liga doméstica cubierta, además de
 los dos torneos continentales (Libertadores/Sudamericana) que ya estaban.
-El filtro completo, ahora con 26 slugs exactos y comentados uno por uno,
+El filtro completo, ahora con 41 slugs exactos y comentados uno por uno,
 vive en `leagues_by_sport.football` en `config.example.yaml`.
 
 Agregar otro deporte es solo una línea más en `sports` (los slugs válidos
@@ -82,7 +82,7 @@ sports: ["football", "basketball"]
 leagues: []                          # sin efecto: fútbol y basketball ya tienen
                                       # su propia entrada en leagues_by_sport
 leagues_by_sport:
-  football:                          # ver la lista completa (26 slugs,
+  football:                          # ver la lista completa (41 slugs,
     - "colombia-liga-dimayor-finalizacion"   # comentada uno por uno) en
     - "argentina-primera-lpf-clausura"       # config.example.yaml
     # ...
@@ -121,9 +121,22 @@ para siempre:
    (`colombia-liga-dimayor-finalizacion` — "Liga DIMAYOR" es la nomenclatura
    oficial de Primera A, "Torneo DIMAYOR" es la Primera B; ver el comentario
    en `config.example.yaml`), pero probablemente tenga el mismo riesgo de
-   cambio de slug al pasar de Finalización a Apertura. Chile, Ecuador y
-   Bolivia (sumados en la misma ampliación) NO muestran este sufijo en su
-   slug — parecen tener nomenclatura de temporada única, sin este riesgo.
+   cambio de slug al pasar de Finalización a Apertura. Chile (sumado en la
+   misma ampliación) NO muestra este sufijo. **Ecuador y Bolivia sí
+   cambiaron (oct-2026)**, detectado por el chequeo semanal de slugs y
+   verificado contra `GET /leagues?sport=football`: `ecuador-serie-a` dejó
+   de existir y la API ahora parte la Serie A en
+   `ecuador-serie-a-championship-round`, `-qualifying-round` y
+   `-relegation-round` (las 3 están en `config.example.yaml`); la primera
+   división de Bolivia no aparece en la API por ahora (solo la copa
+   `bolivia-copa-bolivia`) y se sacó del filtro hasta que reaparezca.
+**Nations League (oct-2026, a pedido del usuario)**: se agregaron los 14
+grupos que la API listaba en `GET /leagues?sport=football` (5 de UEFA, 9 de
+CONCACAF). La API publica una entrada POR GRUPO, no una por torneo, así que
+si aparece otro grupo hay que agregarlo a mano; el chequeo semanal no
+auto-reemplaza estos slugs (sin sufijo de fase conocido) y avisará "sin
+candidatos" cuando un grupo desaparezca — es esperable, no un bug.
+
 2. **🐛 Este riesgo ya se concretó una vez, y se corrigió (sep-2026)**: los
    torneos UEFA y CONMEBOL solo mostraban un slug por fase actual, no uno
    estable para todo el torneo. En agosto, las 3 copas UEFA aparecían como
@@ -142,7 +155,7 @@ para siempre:
 **Mitigación automática (desde sep-2026)**: ya no depende solo de acordarse.
 Un workflow semanal (`.github/workflows/weekly_league_slug_check.yml`, corre
 los domingos, también se puede disparar a mano desde la pestaña Actions)
-ejecuta `scripts/check_league_slugs.py`, que compara los 26 slugs
+ejecuta `scripts/check_league_slugs.py`, que compara los 41 slugs
 configurados contra una respuesta real y actual de
 `GET /leagues?sport=football` (lógica completa, testeada, en
 `src/valuebet/league_slug_check.py`):

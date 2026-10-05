@@ -56,6 +56,7 @@ KNOWN_PHASE_SUFFIXES: Tuple[str, ...] = (
     "-relegation-round",
     "-promotion-round",
     "-championship-round",
+    "-qualifying-round",
     "-group-stage",
 )
 
