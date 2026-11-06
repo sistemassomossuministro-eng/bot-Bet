@@ -213,7 +213,8 @@ def test_systemic_error_aborts_remaining_batches():
     events = _fetch_odds_in_batches(provider, ids, ["Betplay", "Bet365"], "football", diag)
     assert events == []
     assert len(provider.calls) == 1  # no gasta cuota en los 3 lotes restantes
-    assert diag.failed_batches == 1 and diag.systemic_error
+    assert diag.failed_batches == 4 and diag.total_batches == 4  # 1 fallido + 3 cancelados
+    assert diag.systemic_error
     assert "403" in diag.systemic_error and "Bet365 paid" in diag.systemic_error
     assert diag.has_problem()
     assert "plan" in diag.alert_text()
@@ -350,3 +351,77 @@ def test_real_unibet_staleness_example_btts_dropped_h2h_kept_at_48h():
     res = find_value_bets_in_event(ev, ["Betplay"], ["Unibet"], "multiplicative", 1.0, 1,
                                    max_reference_age_hours=48, now=now)
     assert {r.market_key for r in res} == {"h2h"}
+
+
+# ------------------------------------------------ rate limit (429) en lotes
+def _rl(seconds):
+    return OddsApiError("rate", status_code=429, retry_after_seconds=seconds)
+
+
+def test_rate_limit_waits_once_then_retries_same_batch():
+    provider = _BatchProvider([_rl(120), _stub_events(10), _stub_events(10)])
+    diag = OddsFetchDiagnostics()
+    with patch("valuebet.daily.time.sleep") as sl:
+        events = _fetch_odds_in_batches(provider, [str(i) for i in range(20)], ["Betplay"], "football", diag)
+    sl.assert_called_once_with(125)
+    assert len(events) == 20
+    assert len(provider.calls) == 3  # el lote 1 se reintentó
+    assert provider.calls[0] == provider.calls[1]
+    assert diag.failed_batches == 0 and not diag.has_problem()
+    assert diag.rate_limit_waits == 1
+
+
+def test_rate_limit_beyond_budget_aborts_remaining_batches():
+    provider = _BatchProvider([_stub_events(10), _rl(3000)])
+    diag = OddsFetchDiagnostics()
+    with patch("valuebet.daily.time.sleep") as sl:
+        events = _fetch_odds_in_batches(provider, [str(i) for i in range(45)], ["Betplay"], "football", diag)
+    sl.assert_not_called()
+    assert len(events) == 10
+    assert len(provider.calls) == 2  # no sigue golpeando la API
+    assert diag.rate_limited and diag.aborted
+    assert diag.failed_batches == 4 and diag.total_batches == 5
+    assert "límite de peticiones" in diag.alert_text()
+
+
+def test_rate_limit_wait_budget_is_shared_across_batches():
+    provider = _BatchProvider([_rl(300), _stub_events(10), _rl(300), _stub_events(10)])
+    diag = OddsFetchDiagnostics()
+    with patch("valuebet.daily.time.sleep") as sl:
+        _fetch_odds_in_batches(provider, [str(i) for i in range(20)], ["Betplay"], "football", diag)
+    # 305 s usados; otro 305 s superaría el presupuesto de 600 s → el 2.º lote falla
+    assert sl.call_count == 1
+    assert diag.rate_limited and diag.failed_batches == 1
+
+
+# ---------------------------------- h2h de fútbol sin empate (falso +34% EV)
+def test_pinnapi_h2h_without_draw_is_not_built():
+    from valuebet.pinnapi_provider import markets_from_pinnapi_event
+
+    ev = {"periods": {"num_0": {"money_line": {"home": 1.80, "away": 2.10}}}}
+    assert [m for m in markets_from_pinnapi_event(ev) if m.market_key == "h2h"] == []
+    ev["periods"]["num_0"]["money_line"]["draw"] = 3.4
+    assert len([m for m in markets_from_pinnapi_event(ev) if m.market_key == "h2h"]) == 1
+
+
+def test_football_h2h_reference_without_draw_is_ignored_and_falls_back():
+    now = NOW
+    two_way = BookmakerMarket("Pinnacle", "h2h", None, [Outcome("home", 1.94), Outcome("away", 2.06)])
+    unibet = BookmakerMarket("Unibet", "h2h", now - timedelta(hours=2),
+                             [Outcome("home", 2.10), Outcome("draw", 3.20), Outcome("away", 3.60)])
+    betplay = BookmakerMarket("Betplay", "h2h", now,
+                              [Outcome("home", 2.20), Outcome("draw", 3.10), Outcome("away", 2.60)])
+    ev = Event("1", "football", "L", "Union", "Velez", now + timedelta(hours=2),
+               bookmakers={"Pinnacle": [two_way], "Unibet": [unibet], "Betplay": [betplay]})
+    res = find_value_bets_in_event(ev, ["Betplay"], ["Pinnacle", "Unibet"], "multiplicative", 3.0, 1, now=now)
+    # Con el 2-vías habría salido "away @ 2.60" con ~+34% de EV; con Unibet (1X2 completo) no.
+    assert all(r.ev_pct < 20 for r in res)
+    assert all("Pinnacle" not in r.reference_bookmakers for r in res)
+
+
+def test_basketball_h2h_without_draw_is_still_allowed():
+    ref = BookmakerMarket("Unibet", "h2h", NOW - timedelta(hours=1), [Outcome("home", 1.60), Outcome("away", 2.40)])
+    bp = BookmakerMarket("Betplay", "h2h", NOW, [Outcome("home", 1.90), Outcome("away", 2.40)])
+    ev = Event("2", "basketball", "NBA", "A", "B", NOW + timedelta(hours=2), bookmakers={"Unibet": [ref], "Betplay": [bp]})
+    res = find_value_bets_in_event(ev, ["Betplay"], ["Unibet"], "multiplicative", 1.0, 1, now=NOW)
+    assert any(r.selection == "home" for r in res)

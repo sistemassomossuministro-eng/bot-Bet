@@ -274,6 +274,22 @@ llegaba igual, pero vacío). El error solo quedaba en el log.
    córners, tiros...) trae una forma inesperada: se omite ese mercado y se
    sigue.
 
+5. **Rate limit (429)**: el plan gratuito de odds-api.io permite 100
+   peticiones/hora y una corrida usa ~60 (una por liga + los lotes de cuotas).
+   En la primera corrida tras el arreglo (2026-11-06) se había gastado la cuota
+   y 12 de 16 lotes cayeron con "se libera en 561s". Ahora, si el reinicio tarda
+   ≤ 600 s en total, el job espera UNA vez y reintenta ese lote; si tarda más,
+   corta los lotes restantes (sin seguir golpeando la API) y avisa por Telegram.
+   `daily.yml` pasó a `timeout-minutes: 25` para dar cabida a esa espera. **No
+   lances el workflow a mano más de una vez por hora.**
+6. **h2h de fútbol sin empate (bug previo, destapado ese mismo día):** si
+   Pinnacle (pinnapi.com) devolvía `home`/`away` sin `draw` (mercado a punto de
+   cerrar), el devig repartía el 100% entre dos resultados y fabricaba un EV
+   falso (+34% en Unión de Santa Fe vs Vélez, con "probabilidades justas"
+   51.6% + 48.4%). Ahora `pinnapi_provider` exige los 3 resultados y
+   `value_finder` ignora cualquier referencia h2h de fútbol sin empate (cae a
+   la siguiente, p. ej. Unibet). Baloncesto (2 vías) no se ve afectado.
+
 **Qué esperar.** Unibet NO es una casa "sharp" (margen mayor que Bet365 o
 Pinnacle) y su `updatedAt` se queda atrás de Betplay con frecuencia: espera
 menos picks y una referencia más ruidosa que antes. Vigila el CLV y los

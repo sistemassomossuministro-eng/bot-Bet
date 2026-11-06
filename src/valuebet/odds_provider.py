@@ -247,10 +247,17 @@ class OddsApiError(RuntimeError):
     Hereda de RuntimeError a propósito: todo el código/tests que ya atrapaba
     RuntimeError sigue funcionando igual."""
 
-    def __init__(self, message: str, status_code: Optional[int] = None, body: str = ""):
+    def __init__(
+        self,
+        message: str,
+        status_code: Optional[int] = None,
+        body: str = "",
+        retry_after_seconds: Optional[float] = None,
+    ):
         super().__init__(message)
         self.status_code = status_code
         self.body = body
+        self.retry_after_seconds = retry_after_seconds  # solo en 429: segundos hasta que se libera el límite
 
     @property
     def is_systemic(self) -> bool:
@@ -302,6 +309,7 @@ class OddsApiIoProvider(OddsProvider):
                         raise OddsApiError(
                             f"Rate limit de {url} — se libera en {wait:.0f}s, no se reintenta esta corrida",
                             status_code=429,
+                            retry_after_seconds=wait,
                         )
                     logger.warning("Rate limit alcanzado, esperando %.0fs (intento %s)", wait, attempt)
                     time.sleep(wait)

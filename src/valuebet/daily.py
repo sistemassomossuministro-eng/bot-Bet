@@ -8,6 +8,7 @@ depender de que el runner tenga datos de tzdata instalados).
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from typing import Dict, List, Optional
@@ -31,6 +32,15 @@ def bogota_today() -> date:
 
 ODDS_BATCH_SIZE = 10  # eventIds por llamada a /odds/multi (tope de odds-api.io)
 
+# Presupuesto TOTAL de espera por rate limit (429) por corrida, en la fase de
+# cuotas. El plan gratuito permite 100 peticiones/hora y esta corrida usa ~60
+# (una por liga + los lotes de cuotas), así que un 429 casi siempre significa
+# que se lanzó el workflow más de una vez en la misma hora. Visto 2026-11-06:
+# 12 de 16 lotes cayeron con "se libera en 561s". Esperar ese tiempo UNA vez es
+# mucho mejor que dejar el día medio evaluado; si el reinicio tarda más que el
+# presupuesto, no se espera (daily.yml tiene timeout-minutes: 25).
+ODDS_RATE_LIMIT_WAIT_BUDGET_SECONDS = 600.0
+
 
 @dataclass
 class OddsFetchDiagnostics:
@@ -49,7 +59,15 @@ class OddsFetchDiagnostics:
     failed_batches: int = 0
     errors: List[str] = field(default_factory=list)
     systemic_error: Optional[str] = None  # 401/402/403: reintentar igual no sirve
+    rate_limited: bool = False            # 429 sin posibilidad de esperar: se cortó el resto
+    rate_limit_wait_used: float = 0.0     # segundos ya esperados por 429 en esta corrida
+    rate_limit_waits: int = 0
     stale_reference_count: int = 0        # mercados de referencia descartados por viejos
+
+    @property
+    def aborted(self) -> bool:
+        """Ya no tiene sentido seguir pidiendo cuotas en esta corrida."""
+        return bool(self.systemic_error) or self.rate_limited
 
     def has_problem(self) -> bool:
         return self.failed_batches > 0 or (self.events_listed > 0 and self.events_with_odds == 0)
@@ -66,6 +84,15 @@ class OddsFetchDiagnostics:
                 "Revisa odds-api.io/dashboard/bookmakers y los nombres en odds_provider.target_bookmakers / "
                 "reference_bookmakers de config.example.yaml."
             )
+        elif self.rate_limited:
+            lines.append(
+                "odds-api.io alcanzó el límite de peticiones por hora de tu plan gratuito (100/h) y no se pudo "
+                f"esperar a que se libere: {self.failed_batches} de {self.total_batches} lote(s) de cuotas "
+                "quedaron sin evaluar. Probablemente se lanzó el workflow más de una vez en la misma hora."
+            )
+            if self.errors:
+                lines.append(f"Detalle: {self.errors[-1]}")
+            lines.append("Vuelve a lanzar 'Resumen diario' pasada una hora si quieres evaluar el resto de partidos.")
         elif self.failed_batches:
             lines.append(
                 f"Fallaron {self.failed_batches} de {self.total_batches} lote(s) de cuotas; "
@@ -97,23 +124,55 @@ def _fetch_odds_in_batches(
     for i in range(0, len(event_ids), ODDS_BATCH_SIZE):
         chunk = event_ids[i : i + ODDS_BATCH_SIZE]
         diag.total_batches += 1
-        try:
-            events.extend(provider.get_events_odds(chunk, bookmakers, sport=sport))
-        except Exception as exc:
-            diag.failed_batches += 1
-            diag.errors.append(f"{sport}: {exc}")
-            logger.exception("Fallo al obtener cuotas en lote para '%s' (%d eventos)", sport, len(chunk))
-            if isinstance(exc, OddsApiError) and exc.is_systemic:
-                diag.systemic_error = f"HTTP {exc.status_code} — {exc.body or exc}"
-                remaining = len(event_ids) - (i + ODDS_BATCH_SIZE)
-                if remaining > 0:
-                    logger.error(
-                        "Error sistémico de la API (HTTP %s) — se cancelan los %d evento(s) restantes de '%s'.",
-                        exc.status_code,
-                        remaining,
-                        sport,
-                    )
+        waited_for_this_batch = False
+        while True:
+            try:
+                events.extend(provider.get_events_odds(chunk, bookmakers, sport=sport))
                 break
+            except Exception as exc:
+                retry_after = getattr(exc, "retry_after_seconds", None)
+                if (
+                    isinstance(exc, OddsApiError)
+                    and exc.status_code == 429
+                    and retry_after is not None
+                    and not waited_for_this_batch
+                    and diag.rate_limit_wait_used + retry_after + 5 <= ODDS_RATE_LIMIT_WAIT_BUDGET_SECONDS
+                ):
+                    wait = retry_after + 5
+                    logger.warning(
+                        "Rate limit de odds-api.io: esperando %.0fs para reintentar este lote "
+                        "(presupuesto de espera usado: %.0f/%.0fs).",
+                        wait,
+                        diag.rate_limit_wait_used,
+                        ODDS_RATE_LIMIT_WAIT_BUDGET_SECONDS,
+                    )
+                    time.sleep(wait)
+                    diag.rate_limit_wait_used += wait
+                    diag.rate_limit_waits += 1
+                    waited_for_this_batch = True
+                    continue
+
+                diag.failed_batches += 1
+                diag.errors.append(f"{sport}: {exc}")
+                logger.exception("Fallo al obtener cuotas en lote para '%s' (%d eventos)", sport, len(chunk))
+                if isinstance(exc, OddsApiError) and exc.is_systemic:
+                    diag.systemic_error = f"HTTP {exc.status_code} — {exc.body or exc}"
+                elif isinstance(exc, OddsApiError) and exc.status_code == 429:
+                    diag.rate_limited = True
+                break
+
+        if diag.aborted:
+            remaining = len(event_ids) - (i + ODDS_BATCH_SIZE)
+            if remaining > 0:
+                diag.failed_batches += -(-remaining // ODDS_BATCH_SIZE)  # lotes sin intentar
+                diag.total_batches += -(-remaining // ODDS_BATCH_SIZE)
+                logger.error(
+                    "Se cancelan los %d evento(s) restantes de '%s' (%s).",
+                    remaining,
+                    sport,
+                    "error sistémico de la API" if diag.systemic_error else "rate limit sin espera posible",
+                )
+            break
     return events
 
 
@@ -371,9 +430,9 @@ def generate_daily_picks(
 
         event_ids = [stub.event_id for stub in stub_events]
         diagnostics.events_listed += len(event_ids)
-        if diagnostics.systemic_error:
-            # Un deporte anterior ya falló por permiso/plan: este pedirá las
-            # mismas casas y fallaría igual — no se gasta cuota de API.
+        if diagnostics.aborted:
+            # Un deporte anterior ya falló por permiso/plan o por rate limit:
+            # este pedirá lo mismo y fallaría igual — no se gasta cuota de API.
             continue
         # Lotes de 10 eventos por request (en vez de una request por partido) —
         # necesario para que cubrir fútbol mundial (potencialmente cientos de

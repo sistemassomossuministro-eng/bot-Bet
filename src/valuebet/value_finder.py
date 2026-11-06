@@ -116,6 +116,16 @@ def find_value_bets_in_event(
             ref_markets = []
             for ref_bk in reference_bookmakers:
                 for rm in event.markets_for(ref_bk, market_key):
+                    if market_key == "h2h" and event.sport == "football" and rm.outcome_price("draw") is None:
+                        # 1X2 sin empate: no sirve para devigar (reparte el 100%
+                        # entre dos resultados → EV falso). Se cae a la siguiente
+                        # referencia. Ver pinnapi_provider.markets_from_pinnapi_event.
+                        logger.info(
+                            "Referencia %s ignorada en h2h por no traer la cuota del empate: %s",
+                            ref_bk,
+                            event.label(),
+                        )
+                        continue
                     if _is_stale(rm, now, max_reference_age_hours):
                         if stale_reference_log is not None:
                             stale_reference_log.append(

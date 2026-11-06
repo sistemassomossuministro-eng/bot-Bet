@@ -237,7 +237,12 @@ def markets_from_pinnapi_event(pinnapi_event: dict) -> List[BookmakerMarket]:
     money_line = period_0.get("money_line")
     if isinstance(money_line, dict):
         h2h_outcomes = _h2h_outcomes(money_line)
-        if len(h2h_outcomes) >= 2:
+        # Fútbol = 1X2: se exigen LOS TRES resultados. Si Pinnacle retira la cuota
+        # del empate (partido por empezar/en juego, mercado suspendido), quedar
+        # con home/away solamente haría que devig reparta el 100% de probabilidad
+        # entre dos resultados y fabrique un EV falso enorme (visto 2026-11-06:
+        # +34% en Unión de Santa Fe vs Vélez, con probabilidades 51.6%+48.4%).
+        if len(h2h_outcomes) == 3:
             markets.append(BookmakerMarket(bookmaker="Pinnacle", market_key="h2h", updated_at=None, outcomes=h2h_outcomes))
 
     totals = period_0.get("totals")
