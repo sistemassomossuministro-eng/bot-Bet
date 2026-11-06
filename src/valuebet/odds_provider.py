@@ -238,6 +238,26 @@ class OddsProvider(abc.ABC):
         """Devuelve el estado/marcador actual de un evento (para liquidar picks del día anterior)."""
 
 
+class OddsApiError(RuntimeError):
+    """Fallo al consultar odds-api.io, con el código HTTP (si lo hubo) y el
+    cuerpo de la respuesta — para que quien llama pueda distinguir un problema
+    SISTÉMICO (401/402/403: key inválida, o una casa que el plan gratuito ya no
+    incluye — así pasó con Bet365 el 2026-10-26) de uno puntual (5xx, timeout).
+
+    Hereda de RuntimeError a propósito: todo el código/tests que ya atrapaba
+    RuntimeError sigue funcionando igual."""
+
+    def __init__(self, message: str, status_code: Optional[int] = None, body: str = ""):
+        super().__init__(message)
+        self.status_code = status_code
+        self.body = body
+
+    @property
+    def is_systemic(self) -> bool:
+        """True si reintentar con el MISMO pedido no puede funcionar (auth/plan)."""
+        return self.status_code in (401, 402, 403)
+
+
 class OddsApiIoProvider(OddsProvider):
     def __init__(
         self,
@@ -279,8 +299,9 @@ class OddsApiIoProvider(OddsProvider):
                             wait,
                             _MAX_RATE_LIMIT_WAIT_TO_RETRY_SECONDS,
                         )
-                        raise RuntimeError(
-                            f"Rate limit de {url} — se libera en {wait:.0f}s, no se reintenta esta corrida"
+                        raise OddsApiError(
+                            f"Rate limit de {url} — se libera en {wait:.0f}s, no se reintenta esta corrida",
+                            status_code=429,
                         )
                     logger.warning("Rate limit alcanzado, esperando %.0fs (intento %s)", wait, attempt)
                     time.sleep(wait)
@@ -303,7 +324,17 @@ class OddsApiIoProvider(OddsProvider):
                     # el fallo. Se corta rápido para que el resto del job no espere.
                     break
                 time.sleep(min(2 ** attempt, 20))
-        raise RuntimeError(f"No se pudo consultar {url} tras {self.max_retries} intentos") from last_exc
+        status_code = None
+        body = ""
+        resp_obj = getattr(last_exc, "response", None)
+        if resp_obj is not None:
+            status_code = resp_obj.status_code
+            body = (resp_obj.text or "")[:300]
+        raise OddsApiError(
+            f"No se pudo consultar {url} tras {self.max_retries} intentos",
+            status_code=status_code,
+            body=body,
+        ) from last_exc
 
     def list_events(
         self,
@@ -436,19 +467,33 @@ class OddsApiIoProvider(OddsProvider):
         for bk_name, markets in bookmakers_raw.items():
             parsed_markets = []
             for m in markets:
-                market_key = _normalize_market_key(m.get("name", ""))
-                updated_at = _parse_datetime(m.get("updatedAt"))
-                for line in m.get("odds", []):
-                    outcomes = _parse_odds_line(line, market_key)
-                    if outcomes:
-                        parsed_markets.append(
-                            BookmakerMarket(
-                                bookmaker=bk_name,
-                                market_key=market_key,
-                                updated_at=updated_at,
-                                outcomes=outcomes,
+                # Casas como Unibet (referencia desde 2026-11-06) traen decenas
+                # de mercados que el bot nunca usa (goleadores, tiros, córners...)
+                # con formas de línea no verificadas: un mercado raro NUNCA debe
+                # tumbar el parseo de todo el evento.
+                try:
+                    market_key = _normalize_market_key(m.get("name", ""))
+                    updated_at = _parse_datetime(m.get("updatedAt"))
+                    for line in m.get("odds", []):
+                        if not isinstance(line, dict):
+                            continue
+                        outcomes = _parse_odds_line(line, market_key)
+                        if outcomes:
+                            parsed_markets.append(
+                                BookmakerMarket(
+                                    bookmaker=bk_name,
+                                    market_key=market_key,
+                                    updated_at=updated_at,
+                                    outcomes=outcomes,
+                                )
                             )
-                        )
+                except Exception:
+                    logger.warning(
+                        "Mercado '%s' de %s con forma inesperada — se omite.",
+                        m.get("name") if isinstance(m, dict) else m,
+                        bk_name,
+                        exc_info=True,
+                    )
             bookmakers[bk_name] = parsed_markets
 
         # BUG REAL detectado en producción (2026-09-07, ver doc del proyecto):

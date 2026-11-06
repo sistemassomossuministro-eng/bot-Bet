@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 
 from .devig import expected_value_pct, fair_probabilities
@@ -41,14 +42,35 @@ class NearMiss:
     ev_pct: float
 
 
-def _reference_prices(event: Event, reference_bookmakers: List[str], market_key: str, outcome_name: str) -> List[float]:
-    """Junta la cuota de un mismo resultado entre los libros de referencia disponibles."""
+def _is_stale(market, now: datetime, max_age_hours: Optional[float]) -> bool:
+    """True si la cuota de este mercado de referencia es más vieja que
+    `max_age_hours` según su `updated_at`. Sin tope configurado, o sin
+    `updated_at` (ej. Pinnacle vía pinnapi.com no lo trae), NUNCA se considera
+    vieja: no hay base para descartarla, y descartar a ciegas dejaría sin
+    referencia a todo lo que no trae fecha."""
+    if max_age_hours is None or market.updated_at is None:
+        return False
+    updated = market.updated_at
+    if updated.tzinfo is None:
+        updated = updated.replace(tzinfo=timezone.utc)
+    return (now - updated).total_seconds() > max_age_hours * 3600
+
+
+def _age_hours(market, now: datetime) -> float:
+    updated = market.updated_at
+    if updated.tzinfo is None:
+        updated = updated.replace(tzinfo=timezone.utc)
+    return (now - updated).total_seconds() / 3600
+
+
+def _reference_prices(ref_markets, outcome_name: str) -> List[float]:
+    """Junta la cuota de un mismo resultado entre los mercados de referencia
+    (ya filtrados por frescura) disponibles."""
     prices = []
-    for bk in reference_bookmakers:
-        for m in event.markets_for(bk, market_key):
-            p = m.outcome_price(outcome_name)
-            if p:
-                prices.append(p)
+    for m in ref_markets:
+        p = m.outcome_price(outcome_name)
+        if p:
+            prices.append(p)
     return prices
 
 
@@ -68,8 +90,16 @@ def find_value_bets_in_event(
     min_odds: Optional[float] = None,
     max_odds: Optional[float] = None,
     near_misses: Optional[List[NearMiss]] = None,
+    max_reference_age_hours: Optional[float] = None,
+    stale_reference_log: Optional[List[str]] = None,
+    now: Optional[datetime] = None,
 ) -> List[ValueBet]:
+    """`max_reference_age_hours`/`stale_reference_log`/`now`: ver
+    ValueDetectionConfig.max_reference_age_hours. Cada mercado de referencia
+    descartado por viejo agrega una línea descriptiva a `stale_reference_log`
+    (si se pasa) para que daily.py pueda resumirlo en el log."""
     results: List[ValueBet] = []
+    now = now or datetime.now(timezone.utc)
 
     for target_bk in target_bookmakers:
         for market in event.bookmakers.get(target_bk, []):
@@ -85,7 +115,15 @@ def find_value_bets_in_event(
             # correctamente (necesitamos todos los resultados del mercado, no solo uno).
             ref_markets = []
             for ref_bk in reference_bookmakers:
-                ref_markets.extend(event.markets_for(ref_bk, market_key))
+                for rm in event.markets_for(ref_bk, market_key):
+                    if _is_stale(rm, now, max_reference_age_hours):
+                        if stale_reference_log is not None:
+                            stale_reference_log.append(
+                                f"{event.label()} · {market_key} · {ref_bk}: "
+                                f"{_age_hours(rm, now):.0f} h sin actualizar"
+                            )
+                        continue
+                    ref_markets.append(rm)
             if len(set(m.bookmaker for m in ref_markets)) < min_reference_books:
                 continue
 
@@ -132,10 +170,9 @@ def find_value_bets_in_event(
                     )
                     continue
 
-                ref_prices = _reference_prices(event, reference_bookmakers, market_key, outcome.name)
+                ref_prices = _reference_prices(ref_markets, outcome.name)
                 if not ref_prices:
                     continue
-                avg_ref_price = sum(ref_prices) / len(ref_prices)
 
                 # Necesitamos TODAS las cuotas del mercado de un mismo libro de referencia
                 # para devigar bien. Tomamos el primer libro de referencia que tenga el mercado completo.
@@ -248,6 +285,9 @@ def find_value_bets(
     min_odds: Optional[float] = None,
     max_odds: Optional[float] = None,
     near_misses: Optional[List[NearMiss]] = None,
+    max_reference_age_hours: Optional[float] = None,
+    stale_reference_log: Optional[List[str]] = None,
+    now: Optional[datetime] = None,
 ) -> List[ValueBet]:
     all_results: List[ValueBet] = []
     for event in events:
@@ -268,6 +308,9 @@ def find_value_bets(
                 min_odds,
                 max_odds,
                 near_misses,
+                max_reference_age_hours,
+                stale_reference_log,
+                now,
             )
         )
     all_results.sort(key=lambda vb: vb.ev_pct, reverse=True)

@@ -91,6 +91,15 @@ class ValueDetectionConfig:
     # por separado. Ver value_finder.py y el README ("Rango de cuota").
     min_odds: Optional[float] = 1.40
     max_odds: Optional[float] = 3.00
+    # Frescura del libro de referencia (horas). Una cuota de referencia cuyo
+    # `updatedAt` (reportado por odds-api.io) sea más vieja que esto se IGNORA
+    # al devigar: si la línea de la referencia quedó congelada mientras la casa
+    # objetivo (Betplay) se movió, la "ventaja" que se vería sería falsa.
+    # Se agregó el 2026-11-06 al pasar la referencia de Bet365 (se actualiza
+    # constantemente) a Unibet, cuyas líneas en ligas menores a veces llevan
+    # días sin actualizarse. Las cuotas SIN `updatedAt` (ej. Pinnacle vía
+    # pinnapi.com) no se filtran. None desactiva el filtro.
+    max_reference_age_hours: Optional[float] = 48.0
 
 
 @dataclass
@@ -251,6 +260,11 @@ def load_config(path: str = "config.yaml") -> AppConfig:
             float(vd_raw["max_odds"])
             if vd_raw.get("max_odds") is not None
             else (None if "max_odds" in vd_raw else 3.00)
+        ),
+        max_reference_age_hours=(
+            float(vd_raw["max_reference_age_hours"])
+            if vd_raw.get("max_reference_age_hours") is not None
+            else (None if "max_reference_age_hours" in vd_raw else 48.0)
         ),
     )
 

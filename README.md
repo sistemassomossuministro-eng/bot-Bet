@@ -5,10 +5,11 @@
 betting) de fútbol de un conjunto curado de ligas y torneos (Primera A
 colombiana, Argentina, Brasil, MLS, Liga MX, las 5 grandes ligas europeas,
 Champions/Europa/Conference League y Libertadores/Sudamericana — ver
-"Alcance" más abajo), evaluando las cuotas que ofrece **Betplay** contra **Bet365** como
-referencia (ver "Sobre el libro de referencia" más abajo — Pinnacle, el libro
-"sharp" original del diseño, no está disponible en el proveedor de cuotas
-usado). **No coloca apuestas automáticamente.** Cada mañana a las 7:00 (hora
+"Alcance" más abajo), evaluando las cuotas que ofrece **Betplay** contra **Unibet** (y Pinnacle vía
+pinnapi.com, si está activo) como referencia (ver "Sobre el libro de
+referencia" más abajo — Pinnacle, el libro "sharp" original del diseño, no
+está disponible en el proveedor de cuotas usado; Bet365 dejó de ser gratis el
+2026-10-26). **No coloca apuestas automáticamente.** Cada mañana a las 7:00 (hora
 Bogotá) te envía por Telegram los 10 picks con **mayor EV** encontrados ese
 día — nunca partidos al azar, siempre el resultado de ordenar por valor
 esperado todo lo que se pudo evaluar —, al día siguiente verifica solo si
@@ -239,7 +240,47 @@ alternativa mientras tanto sería sumar un segundo proveedor de cuotas que sí
 cubra Wplay e implementar la interfaz `OddsProvider` para él (ver "Extender
 el proyecto").
 
-### Sobre el libro de referencia: por qué Bet365 y no Pinnacle
+### ⚠️ Actualización 2026-11-06: Bet365 ya no es gratis → la referencia ahora es Unibet
+
+**Qué pasó.** El 2026-10-26 (19:00 UTC) odds-api.io movió Bet365 (y las casas
+"sharp"/exchanges) a planes de pago. Con una key gratuita, **cualquier pedido
+que nombre Bet365 responde HTTP 403** (`"Bet365 is only available on our paid
+plans"`). El bot pedía `bookmakers=Betplay,Bet365` en cada lote de
+`/odds/multi`, así que todos los lotes fallaban, no había candidatos, y el job
+terminaba en verde con **0 picks desde el 2026-10-26** (el mensaje de Telegram
+llegaba igual, pero vacío). El error solo quedaba en el log.
+
+**Qué se cambió.**
+
+1. `odds_provider.reference_bookmakers` pasó de `["Bet365"]` a `["Unibet"]`.
+   Probado con la key real (2026-11-06): Unibet trae `ML`, `Spread`, `Totals`
+   y `Both Teams To Score` en los partidos de Colombia y Argentina (William
+   Hill solo trae 1X2, por eso se descartó). **En el panel de odds-api.io
+   (Casas de apuestas) deben estar seleccionadas exactamente Betplay + Unibet**
+   — si no, el pedido vuelve a fallar.
+2. **Filtro de frescura** `value_detection.max_reference_age_hours` (48 por
+   defecto): se ignoran las cuotas de la casa de referencia cuyo `updatedAt`
+   sea más viejo que eso. Unibet, a diferencia de Bet365, a veces lleva días
+   sin actualizar una línea en ligas menores (visto: h2h del 29-oct, BTTS del
+   3-nov). El log INFO dice cuántos mercados se ignoraron; si son demasiados,
+   sube el valor. Pinnacle (pinnapi) no trae fecha y nunca se filtra. `null`
+   desactiva el filtro.
+3. **Alerta explícita por Telegram** cuando falla algún lote de cuotas (antes
+   solo quedaba en el log): `daily.OddsFetchDiagnostics` + `TelegramAlerter.
+   send_odds_problem_alert`, enviada ANTES del mensaje de picks. Un error
+   sistémico (401/402/403) corta los lotes restantes para no gastar cuota de
+   API en pedidos que fallarían igual (`OddsApiError.is_systemic`).
+4. El parseo de cuotas ya no se cae si un mercado raro de Unibet (goleadores,
+   córners, tiros...) trae una forma inesperada: se omite ese mercado y se
+   sigue.
+
+**Qué esperar.** Unibet NO es una casa "sharp" (margen mayor que Bet365 o
+Pinnacle) y su `updatedAt` se queda atrás de Betplay con frecuencia: espera
+menos picks y una referencia más ruidosa que antes. Vigila el CLV y los
+resultados de las primeras semanas antes de confiar en el EV% (el texto de
+abajo sobre Bet365 sigue valiendo como razonamiento, aplicado ahora a Unibet).
+
+### Sobre el libro de referencia: por qué Bet365 y no Pinnacle (histórico, hasta 2026-10-25)
 
 El diseño original de este proyecto usaba **Pinnacle** como libro "sharp" de
 referencia para el cálculo de devig/EV — es el estándar de la industria para
@@ -266,7 +307,7 @@ varios libros recreativos en vez de uno solo (requeriría un cambio en
 `min_reference_books` ya permite configurar cuántos se exigen como mínimo).
 
 El plan gratuito de odds-api.io además solo permite **2 bookmakers propios en
-total** (target + reference combinados) — con Betplay + Bet365 ya se ocupan
+total** (target + reference combinados) — con Betplay + la casa de referencia (hoy Unibet) ya se ocupan
 los dos cupos, así que agregar una tercera casa (otra target o otra
 reference) probablemente exige subir de plan.
 

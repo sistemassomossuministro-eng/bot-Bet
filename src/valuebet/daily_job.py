@@ -29,7 +29,7 @@ import logging
 from .branding import BRAND_NAME
 from .clv import clv_pct
 from .config import load_config, setup_logging
-from .daily import bogota_today, generate_daily_picks, settle_pending_daily_picks
+from .daily import OddsFetchDiagnostics, bogota_today, generate_daily_picks, settle_pending_daily_picks
 from .dashboard import generate_daily_dashboard
 from .descriptions import describe_selection
 from .monthly import generate_monthly_summary_if_due
@@ -156,7 +156,14 @@ def run_daily_job(cfg, provider, storage, alerter) -> None:
     generate_daily_dashboard(cfg, storage, alerter, today)
 
     # 3) Generar los picks de hoy.
-    picks = generate_daily_picks(cfg, provider, storage, today)
+    odds_diagnostics = OddsFetchDiagnostics()
+    picks = generate_daily_picks(cfg, provider, storage, today, diagnostics=odds_diagnostics)
+    if odds_diagnostics.has_problem():
+        logger.error("Problema al obtener cuotas hoy: %s", odds_diagnostics.alert_text())
+        if alerter:
+            # ANTES del mensaje de picks: así el "0 picks" de abajo no se lee
+            # como "hoy no hubo valor" cuando en realidad fue un fallo de API.
+            alerter.send_odds_problem_alert(odds_diagnostics.alert_text())
     today_str = today.isoformat()
     logger.info("Generados %d picks para %s.", len(picks), today_str)
 

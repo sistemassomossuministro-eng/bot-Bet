@@ -27,16 +27,23 @@ odds_provider:
                                     # odds-api.io a la fecha (confirmado con GET /bookmakers); si algún día
                                     # aparece ahí, agrégala. Verifica siempre los nombres exactos con
                                     # GET https://api.odds-api.io/v3/bookmakers?apiKey=TU_KEY antes de sumar una casa.
-  reference_bookmakers: ["Bet365"]  # libro de referencia para estimar la probabilidad "justa" (devig).
-                                     # Pinnacle (el libro "sharp" que este proyecto usaba originalmente como
-                                     # referencia) NO está en el catálogo de odds-api.io — confirmado con
-                                     # GET /bookmakers, no es un tema de nombre ni de plan. Bet365 es el
-                                     # sustituto: no es un libro "sharp" en sentido estricto, pero es de los
-                                     # más líquidos/eficientes entre los que sí cubre el proveedor, así que es
-                                     # la mejor referencia disponible en el nivel gratuito. Ver el README
-                                     # ("Sobre el libro de referencia") para el detalle de esta decisión.
+  reference_bookmakers: ["Unibet"]  # libro de referencia para estimar la probabilidad "justa" (devig).
+                                     # CAMBIO 2026-11-06: antes era Bet365. El 2026-10-26 odds-api.io movió Bet365
+                                     # (y las casas "sharp"/exchanges) a planes de pago: con una key gratuita,
+                                     # CUALQUIER pedido que nombre Bet365 responde HTTP 403 ("Bet365 is only
+                                     # available on our paid plans"), así que todos los lotes de cuotas fallaban
+                                     # y el bot quedó en 0 picks desde el 2026-10-26. Probado con la key real el
+                                     # 2026-11-06: William Hill solo trae 1X2 (sirve poco); Unibet trae h2h,
+                                     # totals, spread y btts — los mismos mercados que usa el bot — pero NO es
+                                     # una casa "sharp" y sus líneas en ligas menores a veces llevan días sin
+                                     # actualizarse (por eso existe value_detection.max_reference_age_hours).
+                                     # Pinnacle (pinnapi.com, ver sección pinnacle_reference abajo) sigue siendo
+                                     # la PRIMERA opción de referencia para h2h/totals cuando está activo; esta
+                                     # casa es el respaldo y la única fuente de btts.
                                      # El plan gratuito de odds-api.io permite solo 2 bookmakers propios en
-                                     # total (target + reference) — Betplay + Bet365 ocupan ambos cupos.
+                                     # total (target + reference), elegidos en odds-api.io/dashboard/bookmakers —
+                                     # el panel DEBE tener exactamente Betplay + esta casa, o el pedido falla.
+                                     # Ver el README ("Sobre el libro de referencia") para el detalle.
   sports: ["football", "basketball"]        # slugs de deporte, ver GET /sports (con tu key:
                                              # https://api.odds-api.io/v3/sports?apiKey=TU_KEY).
                                              # "basketball" trae TODAS las ligas de basketball del
@@ -201,12 +208,18 @@ value_detection:
                                   # defecto porque no se pidió explícitamente, pero el mismo arreglo aplica —
                                   # puedes sumarlo si lo necesitas. Igual, revisa el log las primeras corridas
                                   # por si aparece "se descarta para no cruzar resultados de líneas distintas".
+  max_reference_age_hours: 48    # ignora cuotas de la casa de REFERENCIA cuyo `updatedAt` sea más viejo que
+                                  # esto (horas): si la línea de la referencia quedó congelada mientras Betplay se
+                                  # movió, la "ventaja" sería falsa. Unibet a veces tiene días sin actualizar una
+                                  # línea en ligas menores (probado 2026-11-06). Las cuotas sin `updatedAt`
+                                  # (Pinnacle vía pinnapi) no se filtran. `null` desactiva el filtro. El log del
+                                  # job dice cuántos mercados se ignoraron: si son demasiados, sube este valor.
   max_ev_pct: 50.0                # red de seguridad: un EV por encima de esto casi nunca es valor real —
                                    # se descarta y se deja registro en el log en vez de mostrarse como pick.
   max_totals_point: 5.5           # otra red de seguridad, distinta a la anterior: descarta líneas de
                                    # "totals" con un punto por encima de este valor (ej. "más de 8.5 goles").
                                    # No es un bug de cruce de líneas — el cálculo de EV en una línea así SÍ
-                                   # puede ser correcto — pero hasta un libro de referencia "sharp" (Bet365)
+                                   # puede ser correcto — pero hasta un libro de referencia "sharp"
                                    # dedica menos cuidado a líneas tan extremas/poco apostadas que a la
                                    # línea principal (2.5), así que confiar en esa cuota como "justa" es más
                                    # riesgoso. Pon `null` para desactivar este tope si quieres ver esas líneas.
@@ -314,16 +327,17 @@ pinnacle_reference:
   # curadas de este proyecto (ver src/valuebet/pinnapi_provider.py para el
   # mapeo verificado liga por liga).
   #
-  # Por qué podría interesarte: Bet365 (arriba, en odds_provider) se usa
-  # como libro de referencia solo porque Pinnacle no está disponible en
-  # odds-api.io — pero Bet365 NO es un libro "sharp" en sentido estricto
+  # Por qué podría interesarte: la casa de referencia de odds-api.io
+  # (arriba, en odds_provider; hoy Unibet — antes Bet365, que pasó a plan de
+  # pago el 2026-10-26) se usa solo porque Pinnacle no está disponible en
+  # odds-api.io — y NO es un libro "sharp" en sentido estricto
   # (ver README, "Sobre el libro de referencia"). Pinnacle sí lo es. Si
   # activas esto, se usa como PRIMERA opción de referencia para los
-  # mercados 'h2h'/'totals' — Bet365 sigue siendo el respaldo automático
+  # mercados 'h2h'/'totals' — la casa de referencia sigue siendo el respaldo automático
   # para cualquier partido que Pinnacle no cubra, o si pinnapi falla por lo
   # que sea (ver daily.py::_enrich_events_with_pinnacle_reference_safely,
   # NUNCA tumba el resumen diario). Pinnacle no ofrece 'btts' como
-  # mercado — ese sigue dependiendo de Bet365 siempre, actives esto o no.
+  # mercado — ese sigue dependiendo de la casa de referencia siempre, actives esto o no.
   #
   # El riesgo real, honesto: al no ser un servicio oficial, pinnapi.com
   # podría dejar de funcionar sin aviso (le pasó a la fuente original,
@@ -335,8 +349,8 @@ pinnacle_reference:
   # ACTIVADO (2026-09-07): el usuario ya creó su key gratis en pinnapi.com y
   # la configuró como el secreto PINNAPI_API_KEY en GitHub — con eso puesto,
   # 'enabled: true' es lo único que faltaba para que el resumen diario
-  # empiece a usar Pinnacle como referencia preferida (con Bet365 de
-  # respaldo automático, como se explica arriba).
+  # empiece a usar Pinnacle como referencia preferida (con la casa de
+  # referencia de odds-api.io de respaldo automático, como se explica arriba).
   enabled: true
   api_key: "TU_PINNAPI_API_KEY_AQUI"   # o el secreto PINNAPI_API_KEY — gratis en https://pinnapi.com/
   base_url: "https://pinnapi.com"

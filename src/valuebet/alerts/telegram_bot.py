@@ -144,6 +144,11 @@ class TelegramAlerter:
         )
         return self.send(text)
 
+    def send_odds_problem_alert(self, detail: str) -> bool:
+        """Aviso de que la obtención de cuotas falló (ver daily.OddsFetchDiagnostics)
+        — para que un 0 picks causado por la API no pase por "hoy no hubo valor"."""
+        return self.send(f"🚨 <b>BotBet: problema con las cuotas</b>\n\n{_esc(detail)}")
+
     def send_daily_limit_notice(self) -> bool:
         return self.send(
             "⚠️ Se alcanzó el límite diario de pérdida configurado. "

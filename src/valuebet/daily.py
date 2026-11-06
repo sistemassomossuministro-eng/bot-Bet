@@ -8,12 +8,13 @@ depender de que el runner tenga datos de tzdata instalados).
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from typing import Dict, List, Optional
 
 from .config import AppConfig, leagues_for_sport
 from .models import Event, ValueBet
-from .odds_provider import OddsProvider
+from .odds_provider import OddsApiError, OddsProvider
 from .secondary_signals import enrich_picks_with_secondary_signals
 from .settlement import settle_selection
 from .storage.db import Storage
@@ -26,6 +27,94 @@ BOGOTA_OFFSET = timedelta(hours=-5)
 
 def bogota_today() -> date:
     return (datetime.utcnow() + BOGOTA_OFFSET).date()
+
+
+ODDS_BATCH_SIZE = 10  # eventIds por llamada a /odds/multi (tope de odds-api.io)
+
+
+@dataclass
+class OddsFetchDiagnostics:
+    """Qué pasó al pedir las cuotas del día — existe para que un fallo de la
+    API NO se confunda con "hoy no hubo valor".
+
+    INCIDENTE REAL (2026-10-26 → 2026-11-06): odds-api.io movió Bet365 a planes
+    de pago; cada lote de /odds/multi pedido con Bet365 respondió 403, el
+    código solo lo registraba en el log y seguía, y el job terminaba en verde
+    con 0 picks durante ~12 días sin que nada lo avisara. Con esto, run_daily_job
+    manda una alerta explícita por Telegram cuando algún lote falla."""
+
+    events_listed: int = 0
+    events_with_odds: int = 0
+    total_batches: int = 0
+    failed_batches: int = 0
+    errors: List[str] = field(default_factory=list)
+    systemic_error: Optional[str] = None  # 401/402/403: reintentar igual no sirve
+    stale_reference_count: int = 0        # mercados de referencia descartados por viejos
+
+    def has_problem(self) -> bool:
+        return self.failed_batches > 0 or (self.events_listed > 0 and self.events_with_odds == 0)
+
+    def alert_text(self) -> str:
+        lines = []
+        if self.systemic_error:
+            lines.append(
+                "odds-api.io rechazó el pedido de cuotas (permiso/plan). Probablemente una casa configurada "
+                "ya no está incluida en tu plan gratuito, o la API key dejó de ser válida."
+            )
+            lines.append(f"Detalle: {self.systemic_error}")
+            lines.append(
+                "Revisa odds-api.io/dashboard/bookmakers y los nombres en odds_provider.target_bookmakers / "
+                "reference_bookmakers de config.example.yaml."
+            )
+        elif self.failed_batches:
+            lines.append(
+                f"Fallaron {self.failed_batches} de {self.total_batches} lote(s) de cuotas; "
+                "los picks de hoy pueden estar incompletos."
+            )
+            if self.errors:
+                lines.append(f"Último error: {self.errors[-1]}")
+        else:
+            lines.append(
+                f"Se listaron {self.events_listed} partido(s) pero ninguno devolvió cuotas de las casas "
+                "configuradas. Revisa los nombres exactos en GET /bookmakers."
+            )
+        lines.append("Sin cuotas confiables, un 0 de picks hoy NO significa que no hubo valor.")
+        return "\n".join(lines)
+
+
+def _fetch_odds_in_batches(
+    provider: OddsProvider,
+    event_ids: List[str],
+    bookmakers: List[str],
+    sport: str,
+    diag: OddsFetchDiagnostics,
+) -> List[Event]:
+    """Pide las cuotas en lotes de ODDS_BATCH_SIZE y registra en `diag` cada
+    fallo. Un error puntual (5xx, timeout) solo salta ese lote; uno sistémico
+    (401/402/403) corta el resto, porque todos los demás lotes pedirían lo
+    mismo y fallarían igual (y gastarían cuota de la API para nada)."""
+    events: List[Event] = []
+    for i in range(0, len(event_ids), ODDS_BATCH_SIZE):
+        chunk = event_ids[i : i + ODDS_BATCH_SIZE]
+        diag.total_batches += 1
+        try:
+            events.extend(provider.get_events_odds(chunk, bookmakers, sport=sport))
+        except Exception as exc:
+            diag.failed_batches += 1
+            diag.errors.append(f"{sport}: {exc}")
+            logger.exception("Fallo al obtener cuotas en lote para '%s' (%d eventos)", sport, len(chunk))
+            if isinstance(exc, OddsApiError) and exc.is_systemic:
+                diag.systemic_error = f"HTTP {exc.status_code} — {exc.body or exc}"
+                remaining = len(event_ids) - (i + ODDS_BATCH_SIZE)
+                if remaining > 0:
+                    logger.error(
+                        "Error sistémico de la API (HTTP %s) — se cancelan los %d evento(s) restantes de '%s'.",
+                        exc.status_code,
+                        remaining,
+                        sport,
+                    )
+                break
+    return events
 
 
 def _log_near_miss_summary(near_misses: List[NearMiss], min_ev_pct: float) -> None:
@@ -147,7 +236,7 @@ def _reference_bookmakers_for_devig(cfg: AppConfig, events: List[Event]) -> List
 
     Cualquier fallo consultando pinnapi (key inválida, red caída, forma de
     respuesta inesperada) se registra y se sigue SOLO con
-    cfg.odds_provider.reference_bookmakers (Bet365) — esta fuente es
+    cfg.odds_provider.reference_bookmakers (hoy Unibet) — esta fuente es
     opcional y no oficial (ver PinnacleReferenceConfig), nunca debe tumbar
     el resumen diario."""
     base_reference = cfg.odds_provider.reference_bookmakers
@@ -166,7 +255,7 @@ def _reference_bookmakers_for_devig(cfg: AppConfig, events: List[Event]) -> List
         total_football = sum(1 for e in events if e.sport == "football")
         logger.info(
             "Pinnacle (vía pinnapi.com, fuente no oficial): %d/%d evento(s) de fútbol emparejados "
-            "y usados como referencia preferida para h2h/totals (el resto sigue con Bet365).",
+            "y usados como referencia preferida para h2h/totals (el resto sigue con la referencia de odds_provider.reference_bookmakers).",
             matched,
             total_football,
         )
@@ -184,10 +273,10 @@ def _reference_bookmakers_for_devig(cfg: AppConfig, events: List[Event]) -> List
                 len(events),
             )
     except ValueError as exc:
-        logger.warning("pinnacle_reference.enabled=true pero no se pudo inicializar (%s) — se sigue solo con Bet365.", exc)
+        logger.warning("pinnacle_reference.enabled=true pero no se pudo inicializar (%s) — se sigue solo con la referencia de odds-api.io.", exc)
         return base_reference
     except Exception:
-        logger.exception("Fallo consultando pinnapi.com para la referencia de Pinnacle — se sigue solo con Bet365.")
+        logger.exception("Fallo consultando pinnapi.com para la referencia de Pinnacle — se sigue solo con la referencia de odds-api.io.")
         return base_reference
 
     return ["Pinnacle"] + base_reference
@@ -238,9 +327,17 @@ def _enrich_picks_with_secondary_signals_safely(cfg: AppConfig, picks: List[Valu
 
 
 def generate_daily_picks(
-    cfg: AppConfig, provider: OddsProvider, storage: Storage, pick_date: Optional[date] = None
+    cfg: AppConfig,
+    provider: OddsProvider,
+    storage: Storage,
+    pick_date: Optional[date] = None,
+    diagnostics: Optional[OddsFetchDiagnostics] = None,
 ) -> List[ValueBet]:
-    """Busca value bets de fútbol para hoy, selecciona el top N y los guarda en daily_picks."""
+    """Busca value bets de fútbol para hoy, selecciona el top N y los guarda en daily_picks.
+
+    `diagnostics`: si se pasa, se llena con lo ocurrido al pedir cuotas (ver
+    OddsFetchDiagnostics) para que quien llama pueda avisar de un fallo de API."""
+    diagnostics = diagnostics if diagnostics is not None else OddsFetchDiagnostics()
     pick_date = pick_date or bogota_today()
     pick_date_str = pick_date.isoformat()
 
@@ -273,14 +370,18 @@ def generate_daily_picks(
             )
 
         event_ids = [stub.event_id for stub in stub_events]
-        try:
-            # Una sola tanda de llamadas (10 eventos por request) en vez de una
-            # request por partido — necesario para que cubrir fútbol mundial
-            # (potencialmente cientos de partidos/día) no agote la cuota de la
-            # API de cuotas.
-            events.extend(provider.get_events_odds(event_ids, all_bookmakers, sport=sport))
-        except Exception:
-            logger.exception("Fallo al obtener cuotas en lote para '%s' (%d eventos)", sport, len(event_ids))
+        diagnostics.events_listed += len(event_ids)
+        if diagnostics.systemic_error:
+            # Un deporte anterior ya falló por permiso/plan: este pedirá las
+            # mismas casas y fallaría igual — no se gasta cuota de API.
+            continue
+        # Lotes de 10 eventos por request (en vez de una request por partido) —
+        # necesario para que cubrir fútbol mundial (potencialmente cientos de
+        # partidos/día) no agote la cuota de la API de cuotas. Cada lote
+        # fallido queda registrado en `diagnostics` (ver OddsFetchDiagnostics).
+        sport_events = _fetch_odds_in_batches(provider, event_ids, all_bookmakers, sport, diagnostics)
+        diagnostics.events_with_odds += len(sport_events)
+        events.extend(sport_events)
 
     # Si pinnacle_reference.enabled=true, esto enriquece `events` EN EL LUGAR
     # con los mercados de Pinnacle (h2h/totals) donde haya podido emparejar
@@ -296,6 +397,7 @@ def generate_daily_picks(
     # haya llegado a min_ev_pct — ver NearMiss en value_finder.py. Puramente
     # para el log de abajo, nunca se usa para elegir picks.
     near_misses: List[NearMiss] = []
+    stale_reference_log: List[str] = []
     candidates = find_value_bets(
         events,
         target_bookmakers=cfg.odds_provider.target_bookmakers,
@@ -309,11 +411,23 @@ def generate_daily_picks(
         min_odds=cfg.value_detection.min_odds,
         max_odds=cfg.value_detection.max_odds,
         near_misses=near_misses,
+        max_reference_age_hours=cfg.value_detection.max_reference_age_hours,
+        stale_reference_log=stale_reference_log,
         # Nota: aquí NO se aplican límites de banca/Kelly — el resumen diario es
         # una lista informativa de oportunidades, no una secuencia de apuestas
         # ejecutadas automáticamente una tras otra.
     )
     _log_near_miss_summary(near_misses, cfg.value_detection.min_ev_pct)
+    unique_stale = sorted(set(stale_reference_log))
+    diagnostics.stale_reference_count = len(unique_stale)
+    if unique_stale:
+        logger.info(
+            "%d mercado(s) de referencia ignorados por tener más de %.0f h sin actualizarse "
+            "(value_detection.max_reference_age_hours). Primeros: %s",
+            len(unique_stale),
+            cfg.value_detection.max_reference_age_hours,
+            "; ".join(unique_stale[:5]),
+        )
 
     # Varias líneas de 'totals' del mismo lado (over/under) en el mismo
     # partido son, en la práctica, la misma apuesta a distintos umbrales —
